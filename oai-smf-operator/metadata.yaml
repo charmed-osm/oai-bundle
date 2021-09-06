@@ -1,0 +1,33 @@
+# Copyright 2021 David Garcia
+# See LICENSE file for licensing details.
+
+# For a complete list of supported options, see:
+# https://discourse.charmhub.io/t/charm-metadata-v2/3674/15
+name: oai-smf
+display-name: |
+  TEMPLATE-TODO: fill out a display name for the Charmcraft store
+description: |
+  TEMPLATE-TODO: fill out the charm's description
+summary: |
+  TEMPLATE-TODO: fill out the charm's summary
+
+containers:
+  smf:
+    resource: oai-smf-image
+  tcpdump:
+    resource: tcpdump-image
+
+resources:
+  oai-smf-image:
+    type: oci-image
+    description: OCI image for oai-smf (rdefosseoai/oai-smf:v1.1.0)
+  tcpdump-image:
+    type: oci-image
+    description: OCI image for tcpdump (corfr/tcpdump:latest)
+requires:
+  nrf:
+    interface: nrf
+    limit: 1
+  amf:
+    interface: amf
+    limit: 1

@@ -1,0 +1,46 @@
+bundle: kubernetes
+applications:
+  nrf:
+    charm: ./oai-nrf-operator/oai-nrf_ubuntu-20.04-amd64.charm
+    scale: 1
+    trust: true
+    resources:
+      oai-nrf-image: rdefosseoai/oai-nrf:v1.1.0
+      tcpdump-image: corfr/tcpdump:latest
+  amf:
+    charm: ./oai-amf-operator/oai-amf_ubuntu-20.04-amd64.charm
+    trust: true
+    resources:
+      oai-amf-image: rdefosseoai/oai-amf:v1.1.0
+      tcpdump-image: corfr/tcpdump:latest
+    scale: 1
+  smf:
+    charm: ./oai-smf-operator/oai-smf_ubuntu-20.04-amd64.charm
+    scale: 1
+    trust: true
+    resources:
+      oai-smf-image: rdefosseoai/oai-smf:v1.1.0
+      tcpdump-image: corfr/tcpdump:latest
+  spgwu-tiny:
+    charm: ./oai-spgwu-tiny-operator/oai-spgwu-tiny_ubuntu-20.04-amd64.charm
+    scale: 1
+    trust: true
+    resources:
+      oai-spgwu-tiny-image: rdefosseoai/oai-spgwu-tiny:v1.1.2
+      tcpdump-image: corfr/tcpdump:latest
+  db:
+    charm: ./oai-db-operator/oai-db_ubuntu-20.04-amd64.charm
+    scale: 1
+    resources:
+      oai-db-image: davigar15/oai-test-db:latest
+relations:
+  - - db:db
+    - amf:db
+  - - nrf:nrf
+    - amf:nrf
+  - - nrf:nrf
+    - smf:nrf
+  - - smf:amf
+    - amf:amf
+  - - nrf:nrf
+    - spgwu-tiny:nrf
