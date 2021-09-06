@@ -17,6 +17,7 @@ from ipaddress import IPv4Address
 import logging
 from subprocess import check_output
 from typing import Optional
+import time
 
 from kubernetes import kubernetes
 from ops.charm import CharmBase
@@ -317,52 +318,46 @@ class OaiAmfCharm(CharmBase):
     ####################################
     # Utils - K8s authentication
     ####################################
+
     def _k8s_auth(self) -> bool:
         """Authenticate to kubernetes."""
         if self._stored._k8s_authed:
             return True
         kubernetes.config.load_incluster_config()
-        auth_api = kubernetes.client.RbacAuthorizationV1Api(
-            kubernetes.client.ApiClient()
-        )
-
-        try:
-            auth_api.list_cluster_role()
-        except kubernetes.client.exceptions.ApiException as e:
-            if e.status == 403:
-                # If we can't read a cluster role, we don't have enough permissions
-                self.unit.status = BlockedStatus(
-                    "Run juju trust on this application to continue"
-                )
-            else:
-                raise e
-        except Exception:
-            pass
-
         self._stored._k8s_authed = True
 
     def _patch_stateful_set(self) -> None:
         """Patch the StatefulSet to include specific ServiceAccount and Secret mounts"""
         if self._stored._k8s_stateful_patched:
             return
-        self.unit.status = MaintenanceStatus(
-            "patching StatefulSet for additional k8s permissions"
-        )
 
         # Get an API client
         api = kubernetes.client.AppsV1Api(kubernetes.client.ApiClient())
-        s = api.read_namespaced_stateful_set(
-            name=self.app.name, namespace=self.namespace
-        )
-        # Add the required security context to the container spec
-        s.spec.template.spec.containers[1].security_context.privileged = True
+        for attempt in range(5):
+            try:
+                self.unit.status = MaintenanceStatus(
+                    f"patching StatefulSet for additional k8s permissions. Attempt {attempt+1}/5"
+                )
+                s = api.read_namespaced_stateful_set(
+                    name=self.app.name, namespace=self.namespace
+                )
+                # Add the required security context to the container spec
+                s.spec.template.spec.containers[1].security_context.privileged = True
 
-        # Patch the StatefulSet with our modified object
-        api.patch_namespaced_stateful_set(
-            name=self.app.name, namespace=self.namespace, body=s
-        )
-        logger.info("Patched StatefulSet to include additional volumes and mounts")
-        self._stored._k8s_stateful_patched = True
+                # Patch the StatefulSet with our modified object
+                api.patch_namespaced_stateful_set(
+                    name=self.app.name, namespace=self.namespace, body=s
+                )
+                logger.info(
+                    "Patched StatefulSet to include additional volumes and mounts"
+                )
+                self._stored._k8s_stateful_patched = True
+                return
+            except Exception as e:
+                self.unit.status = MaintenanceStatus(
+                    "failed patching StatefulSet... Retrying in 10 seconds"
+                )
+                time.sleep(5)
 
 
 if __name__ == "__main__":
