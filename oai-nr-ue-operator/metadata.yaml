@@ -1,0 +1,30 @@
+# Copyright 2021 David Garcia
+# See LICENSE file for licensing details.
+
+# For a complete list of supported options, see:
+# https://discourse.charmhub.io/t/charm-metadata-v2/3674/15
+name: oai-nr-ue
+display-name: |
+  TEMPLATE-TODO: fill out a display name for the Charmcraft store
+description: |
+  TEMPLATE-TODO: fill out the charm's description
+summary: |
+  TEMPLATE-TODO: fill out the charm's summary
+
+containers:
+  nr-ue:
+    resource: oai-nr-ue-image
+  tcpdump:
+    resource: tcpdump-image
+
+resources:
+  oai-nr-ue-image:
+    type: oci-image
+    description: OCI image for oai-nr-ue (rdefosseoai/oai-nr-ue:develop)
+  tcpdump-image:
+    type: oci-image
+    description: OCI image for tcpdump (corfr/tcpdump:latest)
+requires:
+  gnb:
+    interface: gnb
+    limit: 1

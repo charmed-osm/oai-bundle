@@ -8,7 +8,7 @@ function build() {
     cd ..    
 }
 
-charms="nrf amf smf spgwu-tiny db gnb"
+charms="nrf amf smf spgwu-tiny db gnb nr-ue"
 for charm in $charms; do
     build $charm &
 done
