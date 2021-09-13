@@ -14,6 +14,7 @@ develop a new k8s charm using the Operator Framework:
 
 from ipaddress import IPv4Address
 import logging
+from pathlib import Path
 from subprocess import check_output
 from typing import Optional
 
@@ -112,8 +113,15 @@ class OaiDbCharm(CharmBase):
     ####################################
 
     def _update_service(self, event):
+        self._initialize_db()
         self._start_service(container_name="db", service_name="oai_db")
         self.unit.status = ActiveStatus()
+
+    def _initialize_db(self):
+        container = self.unit.get_container("db")
+        container.push(
+            "/docker-entrypoint-initdb.d/db.sql", Path("templates/db.sql").read_text()
+        )
 
     def _start_service(self, container_name, service_name):
         container = self.unit.get_container(container_name)

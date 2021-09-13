@@ -6,8 +6,16 @@
 juju add-model oai-01
 ```
 
-## Deploy bundle
+## Deployment
+
+Build charms:
 
 ```bash
-./deploy.sh
+./build.sh
+```
+
+Deploy bundle:
+
+```bash
+juju deploy ./bundle.yaml --trust
 ```
