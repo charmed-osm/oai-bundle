@@ -105,6 +105,10 @@ class OaiGnbCharm(CharmBase):
     ####################################
 
     def _on_oai_gnb_pebble_ready(self, event):
+        pod_ip = self.pod_ip
+        if not pod_ip:
+            event.defer()
+            return
         container = event.workload
         entrypoint = "/opt/oai-gnb/bin/entrypoint.sh"
         command = " ".join(
@@ -132,9 +136,9 @@ class OaiGnbCharm(CharmBase):
                         "NSSAI_SD1": "112233",
                         "AMF_IP_ADDRESS": "",
                         "GNB_NGA_IF_NAME": "eth0",
-                        "GNB_NGA_IP_ADDRESS": str(self.pod_ip),
+                        "GNB_NGA_IP_ADDRESS": str(pod_ip),
                         "GNB_NGU_IF_NAME": "eth0",
-                        "GNB_NGU_IP_ADDRESS": str(self.pod_ip),
+                        "GNB_NGU_IP_ADDRESS": str(pod_ip),
                         "USE_ADDITIONAL_OPTIONS": "--sa -E --rfsim",
                     },
                 }
@@ -192,9 +196,8 @@ class OaiGnbCharm(CharmBase):
 
     @property
     def pod_ip(self) -> Optional[IPv4Address]:
-        return IPv4Address(
-            check_output(["unit-get", "private-address"]).decode().strip()
-        )
+        ip = check_output(["unit-get", "private-address"]).decode().strip()
+        return IPv4Address(ip) if ip else None
 
     ####################################
     # Utils - Services and configuration

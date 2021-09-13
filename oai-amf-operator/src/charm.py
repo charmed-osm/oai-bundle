@@ -157,7 +157,7 @@ class OaiAmfCharm(CharmBase):
                         "AMF_INTERFACE_NAME_FOR_NGAP": "eth0",
                         "AMF_INTERFACE_NAME_FOR_N11": "eth0",
                         "SMF_INSTANCE_ID_0": "1",
-                        "SMF_IPV4_ADDR_0": "127.0.0.1",
+                        "SMF_IPV4_ADDR_0": "0.0.0.0",
                         "SMF_HTTP_VERSION_0": "v1",
                         "SMF_FQDN_0": "localhost",
                         "SMF_INSTANCE_ID_1": "2",
