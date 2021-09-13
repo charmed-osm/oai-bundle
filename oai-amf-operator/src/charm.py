@@ -49,8 +49,8 @@ class OaiAmfCharm(CharmBase):
             self.on.amf_relation_joined: self._provide_service_info,
             self.on.nrf_relation_changed: self._update_service,
             self.on.nrf_relation_broken: self._update_service,
-            self.on.nrf_relation_changed: self._update_service,
-            self.on.nrf_relation_broken: self._update_service,
+            self.on.db_relation_changed: self._update_service,
+            self.on.db_relation_broken: self._update_service,
         }
         for event, observer in event_observer_mapping.items():
             self.framework.observe(event, observer)
