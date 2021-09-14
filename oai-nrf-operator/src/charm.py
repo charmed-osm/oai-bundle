@@ -25,6 +25,7 @@ from ops.main import main
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus
 from ops.pebble import ConnectionError
 
+from kubernetes_service import K8sServicePatch, PatchFailed
 
 logger = logging.getLogger(__name__)
 
@@ -59,23 +60,24 @@ class OaiNrfCharm(CharmBase):
     ####################################
 
     def _provide_service_info(self, event):
-        if not self.unit.is_leader():
-            return
-        pod_ip = self.pod_ip
-        if pod_ip:
-            event.relation.data[self.app]["host"] = str(pod_ip)
-            event.relation.data[self.app]["port"] = str(HTTP1_PORT)
-            event.relation.data[self.app]["api-version"] = "v1"
-        else:
-            event.defer()
+        event.relation.data[self.app]["host"] = self.app.name
+        event.relation.data[self.app]["port"] = str(HTTP1_PORT)
+        event.relation.data[self.app]["api-version"] = "v1"
 
     ####################################
     # Observers - Charm Events
     ####################################
 
-    def _on_install(self, _):
+    def _on_install(self, event):
         self._k8s_auth()
         self._patch_stateful_set()
+        K8sServicePatch.set_ports(
+            self.app.name,
+            [
+                ("http1", 80, 80, "TCP"),
+                ("http2", 9090, 9090, "TCP"),
+            ],
+        )
 
     def _on_config_changed(self, _):
         if self.config["start-tcpdump"]:

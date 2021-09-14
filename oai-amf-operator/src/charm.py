@@ -26,6 +26,7 @@ from ops.main import main
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus
 from ops.pebble import ConnectionError
 
+from kubernetes_service import K8sServicePatch, PatchFailed
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,8 @@ class OaiAmfCharm(CharmBase):
             return
         pod_ip = self.pod_ip
         if pod_ip:
-            event.relation.data[self.app]["host"] = str(pod_ip)
+            event.relation.data[self.app]["host"] = self.app.name
+            event.relation.data[self.app]["ip-address"] = str(pod_ip)
             event.relation.data[self.app]["port"] = str(HTTP1_PORT)
             event.relation.data[self.app]["api-version"] = "v1"
         else:
@@ -105,6 +107,14 @@ class OaiAmfCharm(CharmBase):
     def _on_install(self, event):
         self._k8s_auth()
         self._patch_stateful_set()
+        K8sServicePatch.set_ports(
+            self.app.name,
+            [
+                ("oai-amf", 38412, 38412, "SCTP"),
+                ("http1", 80, 80, "TCP"),
+                ("http2", 9090, 9090, "TCP"),
+            ],
+        )
 
     def _on_config_changed(self, _):
         if self.config["start-tcpdump"]:
@@ -149,9 +159,9 @@ class OaiAmfCharm(CharmBase):
                         "SERVED_GUAMI_AMF_SET_ID_1": "1",
                         "PLMN_SUPPORT_MCC": "208",
                         "PLMN_SUPPORT_MNC": "95",
-                        "PLMN_SUPPORT_TAC": "0xa000",
-                        "SST_0": "222",
-                        "SD_0": "123",
+                        "PLMN_SUPPORT_TAC": "0xa001",
+                        "SST_0": "1",
+                        "SD_0": "1",
                         "SST_1": "111",
                         "SD_1": "124",
                         "AMF_INTERFACE_NAME_FOR_NGAP": "eth0",
@@ -161,16 +171,15 @@ class OaiAmfCharm(CharmBase):
                         "SMF_HTTP_VERSION_0": "v1",
                         "SMF_FQDN_0": "localhost",
                         "SMF_INSTANCE_ID_1": "2",
-                        "SMF_IPV4_ADDR_1": "127.0.0.1",
+                        "SMF_IPV4_ADDR_1": "0.0.0.0",
                         "SMF_HTTP_VERSION_1": "v1",
                         "SMF_FQDN_1": "localhost",
-                        "NRF_FQDN": "oai-nrf-svc",
                         "AUSF_IPV4_ADDRESS": "127.0.0.1",
                         "AUSF_PORT": 80,
                         "AUSF_API_VERSION": "v1",
                         "NF_REGISTRATION": "yes",
                         "SMF_SELECTION": "yes",
-                        "USE_FQDN_DNS": "no",
+                        "USE_FQDN_DNS": "yes",
                         "OPERATOR_KEY": "63bfa50ee6523365ff14c1f45f88737d",
                     },
                 }
@@ -283,7 +292,8 @@ class OaiAmfCharm(CharmBase):
                     "oai_amf": {
                         "override": "merge",
                         "environment": {
-                            "NRF_IPV4_ADDRESS": self._stored.nrf_host,
+                            "NRF_FQDN": self._stored.nrf_host,
+                            "NRF_IPV4_ADDRESS": "0.0.0.0",
                             "NRF_PORT": self._stored.nrf_port,
                             "NRF_API_VERSION": self._stored.nrf_api_version,
                             "MYSQL_SERVER": f"{self._stored.db_host}:{self._stored.db_port}",

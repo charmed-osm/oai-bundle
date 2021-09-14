@@ -27,6 +27,8 @@ from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus
 from ops.pebble import ConnectionError
 
 
+from kubernetes_service import K8sServicePatch, PatchFailed
+
 logger = logging.getLogger(__name__)
 
 SCTP_PORT = 38412
@@ -89,6 +91,14 @@ class OaiSpgwuTinyCharm(CharmBase):
     def _on_install(self, event):
         self._k8s_auth()
         self._patch_stateful_set()
+        K8sServicePatch.set_ports(
+            self.app.name,
+            [
+                ("oai-spgwu-tiny", 8805, 8805, "UDP"),
+                ("s1u", 2152, 2152, "UDP"),
+                ("iperf", 5001, 5001, "UDP"),
+            ],
+        )
 
     def _on_config_changed(self, _):
         if self.config["start-tcpdump"]:
@@ -123,8 +133,8 @@ class OaiSpgwuTinyCharm(CharmBase):
                         "DEBIAN_FRONTEND": "noninteractive",
                         "TZ": "Europe/Paris",
                         "GW_ID": "1",
-                        "MNC03": "208",
-                        "MCC": "95",
+                        "MCC": "208",
+                        "MNC03": "95",
                         "REALM": "3gpp.org",
                         "PID_DIRECTORY": "/var/run",
                         "SGW_INTERFACE_NAME_FOR_S1U_S12_S4_UP": "eth0",
@@ -142,13 +152,10 @@ class OaiSpgwuTinyCharm(CharmBase):
                         "SPGWC0_IP_ADDRESS": "127.0.0.1",
                         "BYPASS_UL_PFCP_RULES": "no",
                         "ENABLE_5G_FEATURES": "yes",
-                        "REGISTER_NRF": "yes",
-                        "USE_FQDN_NRF": "no",
-                        "NRF_FQDN": "no",
-                        "NSSAI_SST_0": "222",
-                        "NSSAI_SD_0": "123",
+                        "NSSAI_SST_0": "1",
+                        "NSSAI_SD_0": "1",
                         "DNN_0": "default",
-                        "UPF_FQDN_5G": "oai-spgwu-tiny-svc",
+                        "UPF_FQDN_5G": self.app.name,
                     },
                 }
             },
@@ -234,7 +241,10 @@ class OaiSpgwuTinyCharm(CharmBase):
                     "oai_spgwu_tiny": {
                         "override": "merge",
                         "environment": {
-                            "NRF_IPV4_ADDRESS": self._stored.nrf_host,
+                            "REGISTER_NRF": "yes",
+                            "USE_FQDN_NRF": "yes",
+                            "NRF_FQDN": self._stored.nrf_host,
+                            "NRF_IPV4_ADDRESS": "127.0.0.1",
                             "NRF_PORT": self._stored.nrf_port,
                             "NRF_API_VERSION": self._stored.nrf_api_version,
                         },

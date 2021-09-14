@@ -19,7 +19,7 @@ applications:
     scale: 1
     trust: true
     resources:
-      oai-smf-image: rdefosseoai/oai-smf:v1.1.0
+      oai-smf-image: rdefosseoai/oai-smf:develop
       tcpdump-image: corfr/tcpdump:latest
   spgwu-tiny:
     charm: ./oai-spgwu-tiny-operator/spgwu-tiny.charm

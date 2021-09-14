@@ -25,6 +25,8 @@ from ops.main import main
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus
 from ops.pebble import ConnectionError
 
+from kubernetes_service import K8sServicePatch, PatchFailed
+
 logger = logging.getLogger(__name__)
 
 SCTP_PORT = 38412
@@ -55,9 +57,6 @@ class OaiSmfCharm(CharmBase):
             nrf_host=None,
             nrf_port=None,
             nrf_api_version=None,
-            amf_host=None,
-            amf_port=None,
-            amf_api_version=None,
             _k8s_stateful_patched=False,
             _k8s_authed=False,
         )
@@ -68,8 +67,7 @@ class OaiSmfCharm(CharmBase):
 
     def _update_service(self, event):
         self._load_nrf_data()
-        self._load_amf_data()
-        if self.is_nrf_ready and self.is_amf_ready:
+        if self.is_nrf_ready:
             try:
                 self._configure_service()
             except ConnectionError:
@@ -80,7 +78,7 @@ class OaiSmfCharm(CharmBase):
             self.unit.status = ActiveStatus()
         else:
             self._stop_service(container_name="smf", service_name="oai_smf")
-            self.unit.status = BlockedStatus("need nrf and amf relations")
+            self.unit.status = BlockedStatus("need nrf relation")
 
     ####################################
     # Observers - Charm Events
@@ -89,6 +87,14 @@ class OaiSmfCharm(CharmBase):
     def _on_install(self, event):
         self._k8s_auth()
         self._patch_stateful_set()
+        K8sServicePatch.set_ports(
+            self.app.name,
+            [
+                ("oai-smf", 8805, 8805, "UDP"),
+                ("http1", 80, 80, "TCP"),
+                ("http2", 9090, 9090, "TCP"),
+            ],
+        )
 
     def _on_config_changed(self, _):
         if self.config["start-tcpdump"]:
@@ -124,19 +130,21 @@ class OaiSmfCharm(CharmBase):
                         "SMF_INTERFACE_PORT_FOR_SBI": "80",
                         "SMF_INTERFACE_HTTP2_PORT_FOR_SBI": "9090",
                         "SMF_API_VERSION": "v1",
-                        "DEFAULT_DNS_IPV4_ADDRESS": "192.168.0.1",
-                        "DEFAULT_DNS_SEC_IPV4_ADDRESS": "192.168.0.1",
+                        "DEFAULT_DNS_IPV4_ADDRESS": "8.8.8.8",
+                        "DEFAULT_DNS_SEC_IPV4_ADDRESS": "8.8.4.4",
                         "REGISTER_NRF": "yes",
-                        "DISCOVER_UPF": "no",
-                        "USE_FQDN_DNS": "no",
-                        "AMF_FQDN": "oai-amf-svc",
+                        "DISCOVER_UPF": "yes",
+                        "USE_FQDN_DNS": "yes",
                         "UDM_IPV4_ADDRESS": "127.0.0.1",
                         "UDM_PORT": "80",
                         "UDM_API_VERSION": "v1",
                         "UDM_FQDN": "localhost",
-                        "NRF_FQDN": "oai-nrf-svc",
                         "UPF_IPV4_ADDRESS": "127.0.0.1",
                         "UPF_FQDN_0": "oai-spgwu-svc",
+                        "AMF_IPV4_ADDRESS": "127.0.0.1",
+                        "AMF_PORT": 80,
+                        "AMF_API_VERSION": "v1",
+                        "AMF_FQDN": "oai-amf-svc",
                     },
                 }
             },
@@ -187,23 +195,14 @@ class OaiSmfCharm(CharmBase):
         )
 
     @property
-    def is_amf_ready(self):
-        return (
-            self._stored.amf_host
-            and self._stored.amf_port
-            and self._stored.amf_api_version
-        )
-
-    @property
     def namespace(self) -> str:
         with open("/var/run/secrets/kubernetes.io/serviceaccount/namespace", "r") as f:
             return f.read().strip()
 
     @property
     def pod_ip(self) -> Optional[IPv4Address]:
-        return IPv4Address(
-            check_output(["unit-get", "private-address"]).decode().strip()
-        )
+        ip = check_output(["unit-get", "private-address"]).decode().strip()
+        return IPv4Address(ip) if ip else None
 
     ####################################
     # Utils - Services and configuration
@@ -221,18 +220,6 @@ class OaiSmfCharm(CharmBase):
             self._stored.nrf_port = None
             self._stored.nrf_api_version = None
 
-    def _load_amf_data(self):
-        relation = self.framework.model.get_relation("amf")
-        if relation:
-            relation_data = relation.data[relation.app]
-            self._stored.amf_host = relation_data.get("host")
-            self._stored.amf_port = relation_data.get("port")
-            self._stored.amf_api_version = relation_data.get("api-version")
-        else:
-            self._stored.amf_host = None
-            self._stored.amf_port = None
-            self._stored.amf_api_version = None
-
     def _configure_service(self):
         container = self.unit.get_container("smf")
         container.add_layer(
@@ -242,12 +229,10 @@ class OaiSmfCharm(CharmBase):
                     "oai_smf": {
                         "override": "merge",
                         "environment": {
-                            "NRF_IPV4_ADDRESS": self._stored.nrf_host,
+                            "NRF_FQDN": self._stored.nrf_host,
+                            "NRF_IPV4_ADDRESS": "",
                             "NRF_PORT": self._stored.nrf_port,
                             "NRF_API_VERSION": self._stored.nrf_api_version,
-                            "AMF_IPV4_ADDRESS": self._stored.amf_host,
-                            "AMF_PORT": self._stored.amf_port,
-                            "AMF_API_VERSION": self._stored.amf_api_version,
                         },
                     }
                 },

@@ -25,6 +25,7 @@ from ops.main import main
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus
 from ops.pebble import ConnectionError
 
+from kubernetes_service import K8sServicePatch, PatchFailed
 logger = logging.getLogger(__name__)
 
 SCTP_PORT = 38412
@@ -93,6 +94,14 @@ class OaiGnbCharm(CharmBase):
     def _on_install(self, event):
         self._k8s_auth()
         self._patch_stateful_set()
+        K8sServicePatch.set_ports(
+            self.app.name,
+            [
+                ("s1c", 36412, 36412, "UDP"),
+                ("s1u", 2152, 2152, "UDP"),
+                ("x2c", 36422, 36422, "UDP"),
+            ],
+        )
 
     def _on_config_changed(self, _):
         if self.config["start-tcpdump"]:
@@ -134,7 +143,6 @@ class OaiGnbCharm(CharmBase):
                         "NSSAI_SST": "1",
                         "NSSAI_SD0": "1",
                         "NSSAI_SD1": "112233",
-                        "AMF_IP_ADDRESS": "",
                         "GNB_NGA_IF_NAME": "eth0",
                         "GNB_NGA_IP_ADDRESS": str(pod_ip),
                         "GNB_NGU_IF_NAME": "eth0",
@@ -207,7 +215,7 @@ class OaiGnbCharm(CharmBase):
         relation = self.framework.model.get_relation("amf")
         if relation:
             relation_data = relation.data[relation.app]
-            self._stored.amf_host = relation_data.get("host")
+            self._stored.amf_host = relation_data.get("ip-address")
             self._stored.amf_port = relation_data.get("port")
             self._stored.amf_api_version = relation_data.get("api-version")
         else:

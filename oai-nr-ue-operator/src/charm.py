@@ -25,6 +25,8 @@ from ops.main import main
 from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus
 from ops.pebble import ConnectionError
 
+from kubernetes_service import K8sServicePatch, PatchFailed
+
 logger = logging.getLogger(__name__)
 
 SCTP_PORT = 38412
@@ -83,6 +85,14 @@ class OaiNrUeCharm(CharmBase):
     def _on_install(self, event):
         self._k8s_auth()
         self._patch_stateful_set()
+        K8sServicePatch.set_ports(
+            self.app.name,
+            [
+                ("s1c", 36412, 36412, "UDP"),
+                ("s1u", 2152, 2152, "UDP"),
+                ("x2c", 36422, 36422, "UDP"),
+            ],
+        )
 
     def _on_config_changed(self, _):
         if self.config["start-tcpdump"]:
