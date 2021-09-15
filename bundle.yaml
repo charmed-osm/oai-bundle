@@ -5,7 +5,7 @@ applications:
     scale: 1
     trust: true
     options:
-      start-tcpdump: true
+      start-tcpdump: false
     resources:
       oai-nrf-image: rdefosseoai/oai-nrf:v1.1.0
       tcpdump-image: corfr/tcpdump:latest
@@ -13,7 +13,7 @@ applications:
     charm: ./oai-amf-operator/amf.charm
     trust: true
     options:
-      start-tcpdump: true
+      start-tcpdump: false
     resources:
       oai-amf-image: rdefosseoai/oai-amf:v1.1.0
       tcpdump-image: corfr/tcpdump:latest
@@ -23,7 +23,7 @@ applications:
     scale: 1
     trust: true
     options:
-      start-tcpdump: true
+      start-tcpdump: false
     resources:
       oai-smf-image: rdefosseoai/oai-smf:develop
       tcpdump-image: corfr/tcpdump:latest
@@ -32,7 +32,7 @@ applications:
     scale: 1
     trust: true
     options:
-      start-tcpdump: true
+      start-tcpdump: false
     resources:
       oai-spgwu-tiny-image: rdefosseoai/oai-spgwu-tiny:v1.1.2
       tcpdump-image: corfr/tcpdump:latest
