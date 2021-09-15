@@ -23,7 +23,7 @@ from kubernetes import kubernetes
 from ops.charm import CharmBase
 from ops.framework import StoredState
 from ops.main import main
-from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus
+from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import ConnectionError
 
 from kubernetes_service import K8sServicePatch, PatchFailed
@@ -187,21 +187,25 @@ class OaiAmfCharm(CharmBase):
 
     @property
     def is_nrf_ready(self):
-        return (
+        is_ready = (
             self._stored.nrf_host
             and self._stored.nrf_port
             and self._stored.nrf_api_version
         )
+        logger.info(f'nrf is{" " if is_ready else " not "}ready')
+        return is_ready
 
     @property
     def is_db_ready(self):
-        return (
+        is_ready = (
             self._stored.db_host
             and self._stored.db_port
             and self._stored.db_user
             and self._stored.db_password
             and self._stored.db_database
         )
+        logger.info(f'db is{" " if is_ready else " not "}ready')
+        return is_ready
 
     @property
     def namespace(self) -> str:
@@ -245,6 +249,10 @@ class OaiAmfCharm(CharmBase):
                 event.defer()
                 return
             if self._start_service(container_name="amf", service_name="oai_amf"):
+                self.unit.status = WaitingStatus(
+                    "waiting 30 seconds for the service to start"
+                )
+                time.sleep(30)
                 self._provide_service_info(event)
                 self.unit.status = ActiveStatus()
         else:
@@ -293,7 +301,7 @@ class OaiAmfCharm(CharmBase):
                                 "NRF_IPV4_ADDRESS": "0.0.0.0",
                                 "NRF_PORT": self._stored.nrf_port,
                                 "NRF_API_VERSION": self._stored.nrf_api_version,
-                                "MYSQL_SERVER": f"{self._stored.db_host}:{self._stored.db_port}",
+                                "MYSQL_SERVER": f"{self._stored.db_host}",
                                 "MYSQL_USER": self._stored.db_user,
                                 "MYSQL_PASS": self._stored.db_password,
                                 "MYSQL_DB": self._stored.db_database,
@@ -307,9 +315,14 @@ class OaiAmfCharm(CharmBase):
     def _start_service(self, container_name, service_name):
         container = self.unit.get_container(container_name)
         service_exists = service_name in container.get_plan().services
-        is_running = container.get_service(service_name).is_running()
+        is_running = (
+            container.get_service(service_name).is_running()
+            if service_exists
+            else False
+        )
 
         if service_exists and not is_running:
+            logger.info(f"{container.get_plan()}")
             container.start(service_name)
             return True
 

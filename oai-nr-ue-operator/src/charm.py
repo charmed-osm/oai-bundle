@@ -22,7 +22,7 @@ from kubernetes import kubernetes
 from ops.charm import CharmBase
 from ops.framework import StoredState
 from ops.main import main
-from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus
+from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import ConnectionError
 
 from kubernetes_service import K8sServicePatch, PatchFailed
@@ -130,7 +130,9 @@ class OaiNrUeCharm(CharmBase):
 
     @property
     def is_gnb_ready(self):
-        return self._stored.gnb_host
+        is_ready = self._stored.gnb_host
+        logger.info(f'gnb is{" " if is_ready else " not "}ready')
+        return is_ready
 
     @property
     def namespace(self) -> str:
@@ -142,6 +144,7 @@ class OaiNrUeCharm(CharmBase):
         return IPv4Address(
             check_output(["unit-get", "private-address"]).decode().strip()
         )
+
     @property
     def container_name(self):
         return "nr-ue"
@@ -180,14 +183,9 @@ class OaiNrUeCharm(CharmBase):
     def _load_gnb_data(self):
         relation = self.framework.model.get_relation("gnb")
         if relation and relation.app in relation.data:
-            relation_data = relation.data[relation.app]
-            self._stored.gnb_host = relation_data.get("host")
-            self._stored.gnb_port = relation_data.get("port")
-            self._stored.gnb_api_version = relation_data.get("api-version")
+            self._stored.gnb_host = relation.data[relation.app].get("host")
         else:
             self._stored.gnb_host = None
-            self._stored.gnb_port = None
-            self._stored.gnb_api_version = None
 
     def _configure_service(self):
         container = self.unit.get_container("nr-ue")
@@ -210,9 +208,14 @@ class OaiNrUeCharm(CharmBase):
     def _start_service(self, container_name, service_name):
         container = self.unit.get_container(container_name)
         service_exists = service_name in container.get_plan().services
-        is_running = container.get_service(service_name).is_running()
+        is_running = (
+            container.get_service(service_name).is_running()
+            if service_exists
+            else False
+        )
 
         if service_exists and not is_running:
+            logger.info(f"{container.get_plan()}")
             container.start(service_name)
             return True
 

@@ -22,7 +22,7 @@ from kubernetes import kubernetes
 from ops.charm import CharmBase
 from ops.framework import StoredState
 from ops.main import main
-from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus
+from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import ConnectionError
 
 from kubernetes_service import K8sServicePatch, PatchFailed
@@ -156,19 +156,23 @@ class OaiSmfCharm(CharmBase):
 
     @property
     def is_amf_ready(self):
-        return (
+        is_ready = (
             self._stored.amf_host
             and self._stored.amf_port
             and self._stored.amf_api_version
         )
+        logger.info(f'amf is{" " if is_ready else " not "}ready')
+        return is_ready
 
     @property
     def is_nrf_ready(self):
-        return (
+        is_ready = (
             self._stored.nrf_host
             and self._stored.nrf_port
             and self._stored.nrf_api_version
         )
+        logger.info(f'nrf is{" " if is_ready else " not "}ready')
+        return is_ready
 
     @property
     def namespace(self) -> str:
@@ -211,6 +215,10 @@ class OaiSmfCharm(CharmBase):
                 event.defer()
                 return
             if self._start_service(container_name="smf", service_name="oai_smf"):
+                self.unit.status = WaitingStatus(
+                    "waiting 30 seconds for the service to start"
+                )
+                time.sleep(30)
                 self._provide_service_info(event)
                 self.unit.status = ActiveStatus()
         else:
@@ -269,12 +277,15 @@ class OaiSmfCharm(CharmBase):
     def _start_service(self, container_name, service_name):
         container = self.unit.get_container(container_name)
         service_exists = service_name in container.get_plan().services
-        is_running = container.get_service(service_name).is_running()
+        is_running = (
+            container.get_service(service_name).is_running()
+            if service_exists
+            else False
+        )
 
         if service_exists and not is_running:
             logger.info(f"{container.get_plan()}")
             container.start(service_name)
-            time.sleep(30)
             return True
 
     def _stop_service(self, container_name, service_name):

@@ -16,15 +16,17 @@ from ipaddress import IPv4Address
 import logging
 from pathlib import Path
 from subprocess import check_output
+import time
 from typing import Optional
 
 from kubernetes import kubernetes
 from ops.charm import CharmBase
 from ops.framework import StoredState
 from ops.main import main
-from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus
+from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import ConnectionError
 
+from kubernetes_service import K8sServicePatch, PatchFailed
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +41,7 @@ class OaiDbCharm(CharmBase):
     def __init__(self, *args):
         super().__init__(*args)
         event_observer_mapping = {
+            self.on.install: self._on_install,
             self.on.db_pebble_ready: self._on_oai_db_pebble_ready,
             self.on.db_relation_joined: self._provide_service_info,
         }
@@ -54,17 +57,22 @@ class OaiDbCharm(CharmBase):
     ####################################
 
     def _provide_service_info(self, event):
-        if not self.unit.is_leader():
-            return
-        pod_ip = self.pod_ip
-        if pod_ip:
-            event.relation.data[self.app]["host"] = str(pod_ip)
-            event.relation.data[self.app]["port"] = str(MYSQL_PORT)
-            event.relation.data[self.app]["user"] = "root"
-            event.relation.data[self.app]["password"] = "root"
-            event.relation.data[self.app]["database"] = "oai_db"
-        else:
-            event.defer()
+        if self.unit.is_leader() and self.is_service_running:
+            for relation in self.framework.model.relations["db"]:
+                relation.data[self.app]["host"] = self.app.name
+                relation.data[self.app]["port"] = str(MYSQL_PORT)
+                relation.data[self.app]["user"] = "root"
+                relation.data[self.app]["password"] = "root"
+                relation.data[self.app]["database"] = "oai_db"
+            else:
+                logger.info("not relations found")
+
+    ####################################
+    # Observers - Charm Events
+    ####################################
+    def _on_install(self, event):
+        self._k8s_auth()
+        K8sServicePatch.set_ports(self.app.name, [("myqsl", 3306, 3306, "TCP")])
 
     ####################################
     # Observers - Pebble Events
@@ -108,14 +116,35 @@ class OaiDbCharm(CharmBase):
             check_output(["unit-get", "private-address"]).decode().strip()
         )
 
+    @property
+    def container_name(self):
+        return "db"
+
+    @property
+    def service_name(self):
+        return "oai_db"
+
+    @property
+    def is_service_running(self):
+        container = self.unit.get_container(self.container_name)
+        return (
+            self.service_name in container.get_plan().services
+            and container.get_service(self.service_name).is_running()
+        )
+
     ####################################
     # Utils - Services and configuration
     ####################################
 
     def _update_service(self, event):
         self._initialize_db()
-        self._start_service(container_name="db", service_name="oai_db")
-        self.unit.status = ActiveStatus()
+        if self._start_service(container_name="db", service_name="oai_db"):
+            self.unit.status = WaitingStatus(
+                "waiting 30 seconds for the service to start"
+            )
+            time.sleep(30)
+            self._provide_service_info(event)
+            self.unit.status = ActiveStatus()
 
     def _initialize_db(self):
         container = self.unit.get_container("db")
@@ -126,9 +155,14 @@ class OaiDbCharm(CharmBase):
     def _start_service(self, container_name, service_name):
         container = self.unit.get_container(container_name)
         service_exists = service_name in container.get_plan().services
-        is_running = container.get_service(service_name).is_running()
+        is_running = (
+            container.get_service(service_name).is_running()
+            if service_exists
+            else False
+        )
 
         if service_exists and not is_running:
+            logger.info(f"{container.get_plan()}")
             container.start(service_name)
             return True
 
@@ -140,6 +174,17 @@ class OaiDbCharm(CharmBase):
         )
         if is_running:
             container.stop(service_name)
+
+    ####################################
+    # Utils - K8s authentication
+    ###########################
+
+    def _k8s_auth(self) -> bool:
+        """Authenticate to kubernetes."""
+        if self._stored._k8s_authed:
+            return True
+        kubernetes.config.load_incluster_config()
+        self._stored._k8s_authed = True
 
 
 if __name__ == "__main__":

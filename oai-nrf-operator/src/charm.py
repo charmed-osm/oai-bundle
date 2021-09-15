@@ -22,7 +22,7 @@ from kubernetes import kubernetes
 from ops.charm import CharmBase
 from ops.framework import StoredState
 from ops.main import main
-from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus
+from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
 from ops.pebble import ConnectionError
 
 from kubernetes_service import K8sServicePatch, PatchFailed
@@ -165,16 +165,25 @@ class OaiNrfCharm(CharmBase):
     ####################################
 
     def _update_service(self, event):
-        self._start_service(container_name="nrf", service_name="oai_nrf")
-        self._provide_service_info(event)
-        self.unit.status = ActiveStatus()
+        if self._start_service(container_name="nrf", service_name="oai_nrf"):
+            self.unit.status = WaitingStatus(
+                "waiting 30 seconds for the service to start"
+            )
+            time.sleep(30)
+            self._provide_service_info(event)
+            self.unit.status = ActiveStatus()
 
     def _start_service(self, container_name, service_name):
         container = self.unit.get_container(container_name)
         service_exists = service_name in container.get_plan().services
-        is_running = container.get_service(service_name).is_running()
+        is_running = (
+            container.get_service(service_name).is_running()
+            if service_exists
+            else False
+        )
 
         if service_exists and not is_running:
+            logger.info(f"{container.get_plan()}")
             container.start(service_name)
             return True
 
