@@ -26,6 +26,7 @@ from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus
 from ops.pebble import ConnectionError
 
 from kubernetes_service import K8sServicePatch, PatchFailed
+
 logger = logging.getLogger(__name__)
 
 SCTP_PORT = 38412
@@ -48,6 +49,8 @@ class OaiGnbCharm(CharmBase):
             self.on.gnb_relation_joined: self._provide_service_info,
             self.on.amf_relation_changed: self._update_service,
             self.on.amf_relation_broken: self._update_service,
+            self.on.spgwu_relation_changed: self._update_service,
+            self.on.spgwu_relation_broken: self._update_service,
         }
         for event, observer in event_observer_mapping.items():
             self.framework.observe(event, observer)
@@ -55,6 +58,7 @@ class OaiGnbCharm(CharmBase):
             amf_host=None,
             amf_port=None,
             amf_api_version=None,
+            spgwu_ready=False,
             _k8s_stateful_patched=False,
             _k8s_authed=False,
         )
@@ -64,28 +68,14 @@ class OaiGnbCharm(CharmBase):
     ####################################
 
     def _provide_service_info(self, event):
-        if not self.unit.is_leader():
-            return
-        pod_ip = self.pod_ip
-        if pod_ip:
-            event.relation.data[self.app]["host"] = str(pod_ip)
-        else:
-            event.defer()
-
-    def _update_service(self, event):
-        self._load_amf_data()
-        if self.is_amf_ready:
-            try:
-                self._configure_service()
-            except ConnectionError:
-                logger.info("pebble socket not available, deferring config-changed")
-                event.defer()
-                return
-            self._start_service(container_name="gnb", service_name="oai_gnb")
-            self.unit.status = ActiveStatus()
-        else:
-            self._stop_service(container_name="gnb", service_name="oai_gnb")
-            self.unit.status = BlockedStatus("need amf relation")
+        if self.unit.is_leader() and self.is_service_running:
+            pod_ip = self.pod_ip
+            if pod_ip:
+                for relation in self.framework.model.relations["gnb"]:
+                    logger.info(f"Found relation {relation.name} with id {relation.id}")
+                    relation.data[self.app]["host"] = str(pod_ip)
+                else:
+                    logger.info("not relations found")
 
     ####################################
     # Observers - Charm Events
@@ -103,11 +93,8 @@ class OaiGnbCharm(CharmBase):
             ],
         )
 
-    def _on_config_changed(self, _):
-        if self.config["start-tcpdump"]:
-            self._start_service("tcpdump", "tcpdump")
-        else:
-            self._stop_service("tcpdump", "tcpdump")
+    def _on_config_changed(self, event):
+        self._update_tcpdump_service(event)
 
     ####################################
     # Observers - Pebble Events
@@ -161,29 +148,7 @@ class OaiGnbCharm(CharmBase):
             return
 
     def _on_tcpdump_pebble_ready(self, event):
-        container = event.workload
-        command = f"/usr/sbin/tcpdump -i any -w /pcap_{self.app.name}.pcap"
-        pebble_layer = {
-            "summary": "tcpdump layer",
-            "description": "pebble config layer for tcpdump",
-            "services": {
-                "tcpdump": {
-                    "override": "replace",
-                    "summary": "tcpdump",
-                    "command": command,
-                    "environment": {
-                        "DEBIAN_FRONTEND": "noninteractive",
-                        "TZ": "Europe/Paris",
-                    },
-                }
-            },
-        }
-        try:
-            container.add_layer("tcpdump", pebble_layer, combine=True)
-        except ConnectionError:
-            logger.info("pebble socket not available, deferring config-changed")
-            event.defer()
-            return
+        self._update_tcpdump_service(event)
 
     ####################################
     # Properties
@@ -198,6 +163,10 @@ class OaiGnbCharm(CharmBase):
         )
 
     @property
+    def is_spgwu_ready(self):
+        return self._stored.spgwu_ready
+
+    @property
     def namespace(self) -> str:
         with open("/var/run/secrets/kubernetes.io/serviceaccount/namespace", "r") as f:
             return f.read().strip()
@@ -207,13 +176,46 @@ class OaiGnbCharm(CharmBase):
         ip = check_output(["unit-get", "private-address"]).decode().strip()
         return IPv4Address(ip) if ip else None
 
+    @property
+    def container_name(self):
+        return "gnb"
+
+    @property
+    def service_name(self):
+        return "oai_gnb"
+
+    @property
+    def is_service_running(self):
+        container = self.unit.get_container(self.container_name)
+        return (
+            self.service_name in container.get_plan().services
+            and container.get_service(self.service_name).is_running()
+        )
+
     ####################################
     # Utils - Services and configuration
     ####################################
 
+    def _update_service(self, event):
+        self._load_amf_data()
+        self._load_spgwu_data()
+        if self.is_amf_ready and self.is_spgwu_ready:
+            try:
+                self._configure_service()
+            except ConnectionError:
+                logger.info("pebble socket not available, deferring config-changed")
+                event.defer()
+                return
+            if self._start_service(container_name="gnb", service_name="oai_gnb"):
+                self._provide_service_info(event)
+                self.unit.status = ActiveStatus()
+        else:
+            self._stop_service(container_name="gnb", service_name="oai_gnb")
+            self.unit.status = BlockedStatus("need amf and spgwu relations")
+
     def _load_amf_data(self):
         relation = self.framework.model.get_relation("amf")
-        if relation:
+        if relation and relation.app in relation.data:
             relation_data = relation.data[relation.app]
             self._stored.amf_host = relation_data.get("ip-address")
             self._stored.amf_port = relation_data.get("port")
@@ -223,31 +225,40 @@ class OaiGnbCharm(CharmBase):
             self._stored.amf_port = None
             self._stored.amf_api_version = None
 
+    def _load_spgwu_data(self):
+        relation = self.framework.model.get_relation("spgwu")
+        if relation and relation.app in relation.data:
+            relation_data = relation.data[relation.app]
+            self._stored.spgwu_ready = relation_data.get("ready") == "True"
+        else:
+            self._stored.spgwu_ready = False
+
     def _configure_service(self):
         container = self.unit.get_container("gnb")
-        container.add_layer(
-            "oai_gnb",
-            {
-                "services": {
-                    "oai_gnb": {
-                        "override": "merge",
-                        "environment": {
-                            "AMF_IP_ADDRESS": self._stored.amf_host,
-                        },
-                    }
+        if self.service_name in container.get_plan().services:
+            container.add_layer(
+                "oai_gnb",
+                {
+                    "services": {
+                        "oai_gnb": {
+                            "override": "merge",
+                            "environment": {
+                                "AMF_IP_ADDRESS": self._stored.amf_host,
+                            },
+                        }
+                    },
                 },
-            },
-            combine=True,
-        )
+                combine=True,
+            )
 
     def _start_service(self, container_name, service_name):
         container = self.unit.get_container(container_name)
-        is_running = (
-            service_name in container.get_plan().services
-            and container.get_service(service_name).is_running()
-        )
-        if not is_running:
+        service_exists = service_name in container.get_plan().services
+        is_running = container.get_service(service_name).is_running()
+
+        if service_exists and not is_running:
             container.start(service_name)
+            return True
 
     def _stop_service(self, container_name, service_name):
         container = self.unit.get_container(container_name)
@@ -257,6 +268,44 @@ class OaiGnbCharm(CharmBase):
         )
         if is_running:
             container.stop(service_name)
+
+    ####################################
+    # Utils - TCP Dump configuration
+    ####################################
+
+    def _update_tcpdump_service(self, event):
+        try:
+            self._configure_tcpdump_service()
+        except ConnectionError:
+            logger.info("pebble socket not available, deferring config-changed")
+            event.defer()
+            return
+        if self.config["start-tcpdump"]:
+            self._start_service("tcpdump", "tcpdump")
+        else:
+            self._stop_service("tcpdump", "tcpdump")
+
+    def _configure_tcpdump_service(self):
+        container = self.unit.get_container("tcpdump")
+        container.add_layer(
+            "tcpdump",
+            {
+                "summary": "tcpdump layer",
+                "description": "pebble config layer for tcpdump",
+                "services": {
+                    "tcpdump": {
+                        "override": "replace",
+                        "summary": "tcpdump",
+                        "command": f"/usr/sbin/tcpdump -i any -w /pcap_{self.app.name}.pcap",
+                        "environment": {
+                            "DEBIAN_FRONTEND": "noninteractive",
+                            "TZ": "Europe/Paris",
+                        },
+                    }
+                },
+            },
+            combine=True,
+        )
 
     ####################################
     # Utils - K8s authentication

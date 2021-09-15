@@ -28,3 +28,9 @@ requires:
   nrf:
     interface: nrf
     limit: 1
+  amf:
+    interface: amf
+    limit: 1
+provides:
+  smf:
+    interface: smf

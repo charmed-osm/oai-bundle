@@ -42,7 +42,9 @@ class K8sServicePatch:
             ports.
         """
         ports = [
-            kubernetes.client.V1ServicePort(name=port[0], port=port[1], target_port=port[2], protocol=port[3])
+            kubernetes.client.V1ServicePort(
+                name=port[0], port=port[1], target_port=port[2], protocol=port[3]
+            )
             for port in service_ports
         ]
 

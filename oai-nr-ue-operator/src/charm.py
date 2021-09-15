@@ -60,25 +60,6 @@ class OaiNrUeCharm(CharmBase):
         )
 
     ####################################
-    # Observers - Relation Events
-    ####################################
-
-    def _update_service(self, event):
-        self._load_gnb_data()
-        if self.is_gnb_ready:
-            try:
-                self._configure_service()
-            except ConnectionError:
-                logger.info("pebble socket not available, deferring config-changed")
-                event.defer()
-                return
-            self._start_service(container_name="nr-ue", service_name="oai_nr_ue")
-            self.unit.status = ActiveStatus()
-        else:
-            self._stop_service(container_name="nr-ue", service_name="oai_nr_ue")
-            self.unit.status = BlockedStatus("need gnb relation")
-
-    ####################################
     # Observers - Charm Events
     ####################################
 
@@ -94,11 +75,8 @@ class OaiNrUeCharm(CharmBase):
             ],
         )
 
-    def _on_config_changed(self, _):
-        if self.config["start-tcpdump"]:
-            self._start_service("tcpdump", "tcpdump")
-        else:
-            self._stop_service("tcpdump", "tcpdump")
+    def _on_config_changed(self, event):
+        self._update_tcpdump_service(event)
 
     ####################################
     # Observers - Pebble Events
@@ -127,7 +105,7 @@ class OaiNrUeCharm(CharmBase):
                         "FULL_IMSI": "208950000000031",
                         "FULL_KEY": "0C0A34601D4F07677303652C0462535B",
                         "OPC": "63bfa50ee6523365ff14c1f45f88737d",
-                        "DNN": "default",
+                        "DNN": "oai",
                         "NSSAI_SST": "1",
                         "NSSAI_SD": "1",
                         "USE_ADDITIONAL_OPTIONS": "-E --sa --rfsim -r 106 --numerology 1 -C 3619200000 --nokrnmod",
@@ -144,29 +122,7 @@ class OaiNrUeCharm(CharmBase):
             return
 
     def _on_tcpdump_pebble_ready(self, event):
-        container = event.workload
-        command = f"/usr/sbin/tcpdump -i any -w /pcap_{self.app.name}.pcap"
-        pebble_layer = {
-            "summary": "tcpdump layer",
-            "description": "pebble config layer for tcpdump",
-            "services": {
-                "tcpdump": {
-                    "override": "replace",
-                    "summary": "tcpdump",
-                    "command": command,
-                    "environment": {
-                        "DEBIAN_FRONTEND": "noninteractive",
-                        "TZ": "Europe/Paris",
-                    },
-                }
-            },
-        }
-        try:
-            container.add_layer("tcpdump", pebble_layer, combine=True)
-        except ConnectionError:
-            logger.info("pebble socket not available, deferring config-changed")
-            event.defer()
-            return
+        self._update_tcpdump_service(event)
 
     ####################################
     # Properties
@@ -186,14 +142,44 @@ class OaiNrUeCharm(CharmBase):
         return IPv4Address(
             check_output(["unit-get", "private-address"]).decode().strip()
         )
+    @property
+    def container_name(self):
+        return "nr-ue"
+
+    @property
+    def service_name(self):
+        return "oai_nr_ue"
+
+    @property
+    def is_service_running(self):
+        container = self.unit.get_container(self.container_name)
+        return (
+            self.service_name in container.get_plan().services
+            and container.get_service(self.service_name).is_running()
+        )
 
     ####################################
     # Utils - Services and configuration
     ####################################
 
+    def _update_service(self, event):
+        self._load_gnb_data()
+        if self.is_gnb_ready:
+            try:
+                self._configure_service()
+            except ConnectionError:
+                logger.info("pebble socket not available, deferring config-changed")
+                event.defer()
+                return
+            self._start_service(container_name="nr-ue", service_name="oai_nr_ue")
+            self.unit.status = ActiveStatus()
+        else:
+            self._stop_service(container_name="nr-ue", service_name="oai_nr_ue")
+            self.unit.status = BlockedStatus("need gnb relation")
+
     def _load_gnb_data(self):
         relation = self.framework.model.get_relation("gnb")
-        if relation:
+        if relation and relation.app in relation.data:
             relation_data = relation.data[relation.app]
             self._stored.gnb_host = relation_data.get("host")
             self._stored.gnb_port = relation_data.get("port")
@@ -205,29 +191,30 @@ class OaiNrUeCharm(CharmBase):
 
     def _configure_service(self):
         container = self.unit.get_container("nr-ue")
-        container.add_layer(
-            "oai_nr_ue",
-            {
-                "services": {
-                    "oai_nr_ue": {
-                        "override": "merge",
-                        "environment": {
-                            "RFSIMULATOR": self._stored.gnb_host,
-                        },
-                    }
+        if self.service_name in container.get_plan().services:
+            container.add_layer(
+                "oai_nr_ue",
+                {
+                    "services": {
+                        "oai_nr_ue": {
+                            "override": "merge",
+                            "environment": {
+                                "RFSIMULATOR": self._stored.gnb_host,
+                            },
+                        }
+                    },
                 },
-            },
-            combine=True,
-        )
+                combine=True,
+            )
 
     def _start_service(self, container_name, service_name):
         container = self.unit.get_container(container_name)
-        is_running = (
-            service_name in container.get_plan().services
-            and container.get_service(service_name).is_running()
-        )
-        if not is_running:
+        service_exists = service_name in container.get_plan().services
+        is_running = container.get_service(service_name).is_running()
+
+        if service_exists and not is_running:
             container.start(service_name)
+            return True
 
     def _stop_service(self, container_name, service_name):
         container = self.unit.get_container(container_name)
@@ -237,6 +224,44 @@ class OaiNrUeCharm(CharmBase):
         )
         if is_running:
             container.stop(service_name)
+
+    ####################################
+    # Utils - TCP Dump configuration
+    ####################################
+
+    def _update_tcpdump_service(self, event):
+        try:
+            self._configure_tcpdump_service()
+        except ConnectionError:
+            logger.info("pebble socket not available, deferring config-changed")
+            event.defer()
+            return
+        if self.config["start-tcpdump"]:
+            self._start_service("tcpdump", "tcpdump")
+        else:
+            self._stop_service("tcpdump", "tcpdump")
+
+    def _configure_tcpdump_service(self):
+        container = self.unit.get_container("tcpdump")
+        container.add_layer(
+            "tcpdump",
+            {
+                "summary": "tcpdump layer",
+                "description": "pebble config layer for tcpdump",
+                "services": {
+                    "tcpdump": {
+                        "override": "replace",
+                        "summary": "tcpdump",
+                        "command": f"/usr/sbin/tcpdump -i any -w /pcap_{self.app.name}.pcap",
+                        "environment": {
+                            "DEBIAN_FRONTEND": "noninteractive",
+                            "TZ": "Europe/Paris",
+                        },
+                    }
+                },
+            },
+            combine=True,
+        )
 
     ####################################
     # Utils - K8s authentication

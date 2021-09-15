@@ -46,14 +46,18 @@ class OaiSmfCharm(CharmBase):
             self.on.tcpdump_pebble_ready: self._on_tcpdump_pebble_ready,
             self.on.install: self._on_install,
             self.on.config_changed: self._on_config_changed,
-            self.on.nrf_relation_changed: self._update_service,
-            self.on.nrf_relation_broken: self._update_service,
             self.on.amf_relation_changed: self._update_service,
             self.on.amf_relation_broken: self._update_service,
+            self.on.nrf_relation_changed: self._update_service,
+            self.on.nrf_relation_broken: self._update_service,
+            self.on.smf_relation_joined: self._provide_service_info,
         }
         for event, observer in event_observer_mapping.items():
             self.framework.observe(event, observer)
         self._stored.set_default(
+            amf_host=None,
+            amf_port=None,
+            amf_api_version=None,
             nrf_host=None,
             nrf_port=None,
             nrf_api_version=None,
@@ -65,20 +69,13 @@ class OaiSmfCharm(CharmBase):
     # Observers - Relation Events
     ####################################
 
-    def _update_service(self, event):
-        self._load_nrf_data()
-        if self.is_nrf_ready:
-            try:
-                self._configure_service()
-            except ConnectionError:
-                logger.info("pebble socket not available, deferring config-changed")
-                event.defer()
-                return
-            self._start_service(container_name="smf", service_name="oai_smf")
-            self.unit.status = ActiveStatus()
-        else:
-            self._stop_service(container_name="smf", service_name="oai_smf")
-            self.unit.status = BlockedStatus("need nrf relation")
+    def _provide_service_info(self, event):
+        if self.unit.is_leader() and self.is_service_running:
+            for relation in self.framework.model.relations["smf"]:
+                logger.info(f"Found relation {relation.name} with id {relation.id}")
+                relation.data[self.app]["ready"] = str(True)
+            else:
+                logger.info("not relations found")
 
     ####################################
     # Observers - Charm Events
@@ -96,11 +93,8 @@ class OaiSmfCharm(CharmBase):
             ],
         )
 
-    def _on_config_changed(self, _):
-        if self.config["start-tcpdump"]:
-            self._start_service("tcpdump", "tcpdump")
-        else:
-            self._stop_service("tcpdump", "tcpdump")
+    def _on_config_changed(self, event):
+        self._update_tcpdump_service(event)
 
     ####################################
     # Observers - Pebble Events
@@ -140,11 +134,7 @@ class OaiSmfCharm(CharmBase):
                         "UDM_API_VERSION": "v1",
                         "UDM_FQDN": "localhost",
                         "UPF_IPV4_ADDRESS": "127.0.0.1",
-                        "UPF_FQDN_0": "oai-spgwu-svc",
-                        "AMF_IPV4_ADDRESS": "127.0.0.1",
-                        "AMF_PORT": 80,
-                        "AMF_API_VERSION": "v1",
-                        "AMF_FQDN": "oai-amf-svc",
+                        "UPF_FQDN_0": "localhost",
                     },
                 }
             },
@@ -158,33 +148,19 @@ class OaiSmfCharm(CharmBase):
             return
 
     def _on_tcpdump_pebble_ready(self, event):
-        container = event.workload
-        command = f"/usr/sbin/tcpdump -i any -w /pcap_{self.app.name}.pcap"
-        pebble_layer = {
-            "summary": "tcpdump layer",
-            "description": "pebble config layer for tcpdump",
-            "services": {
-                "tcpdump": {
-                    "override": "replace",
-                    "summary": "tcpdump",
-                    "command": command,
-                    "environment": {
-                        "DEBIAN_FRONTEND": "noninteractive",
-                        "TZ": "Europe/Paris",
-                    },
-                }
-            },
-        }
-        try:
-            container.add_layer("tcpdump", pebble_layer, combine=True)
-        except ConnectionError:
-            logger.info("pebble socket not available, deferring config-changed")
-            event.defer()
-            return
+        self._update_tcpdump_service(event)
 
     ####################################
     # Properties
     ####################################
+
+    @property
+    def is_amf_ready(self):
+        return (
+            self._stored.amf_host
+            and self._stored.amf_port
+            and self._stored.amf_api_version
+        )
 
     @property
     def is_nrf_ready(self):
@@ -204,13 +180,58 @@ class OaiSmfCharm(CharmBase):
         ip = check_output(["unit-get", "private-address"]).decode().strip()
         return IPv4Address(ip) if ip else None
 
+    @property
+    def container_name(self):
+        return "smf"
+
+    @property
+    def service_name(self):
+        return "oai_smf"
+
+    @property
+    def is_service_running(self):
+        container = self.unit.get_container(self.container_name)
+        return (
+            self.service_name in container.get_plan().services
+            and container.get_service(self.service_name).is_running()
+        )
+
     ####################################
     # Utils - Services and configuration
     ####################################
 
+    def _update_service(self, event):
+        self._load_amf_data()
+        self._load_nrf_data()
+        if self.is_nrf_ready and self.is_amf_ready:
+            try:
+                self._configure_service()
+            except ConnectionError:
+                logger.info("pebble socket not available, deferring config-changed")
+                event.defer()
+                return
+            if self._start_service(container_name="smf", service_name="oai_smf"):
+                self._provide_service_info(event)
+                self.unit.status = ActiveStatus()
+        else:
+            self._stop_service(container_name="smf", service_name="oai_smf")
+            self.unit.status = BlockedStatus("need nrf and amf relations")
+
+    def _load_amf_data(self):
+        relation = self.framework.model.get_relation("amf")
+        if relation and relation.app in relation.data:
+            relation_data = relation.data[relation.app]
+            self._stored.amf_host = relation_data.get("host")
+            self._stored.amf_port = relation_data.get("port")
+            self._stored.amf_api_version = relation_data.get("api-version")
+        else:
+            self._stored.amf_host = None
+            self._stored.amf_port = None
+            self._stored.amf_api_version = None
+
     def _load_nrf_data(self):
         relation = self.framework.model.get_relation("nrf")
-        if relation:
+        if relation and relation.app in relation.data:
             relation_data = relation.data[relation.app]
             self._stored.nrf_host = relation_data.get("host")
             self._stored.nrf_port = relation_data.get("port")
@@ -222,32 +243,39 @@ class OaiSmfCharm(CharmBase):
 
     def _configure_service(self):
         container = self.unit.get_container("smf")
-        container.add_layer(
-            "oai_smf",
-            {
-                "services": {
-                    "oai_smf": {
-                        "override": "merge",
-                        "environment": {
-                            "NRF_FQDN": self._stored.nrf_host,
-                            "NRF_IPV4_ADDRESS": "",
-                            "NRF_PORT": self._stored.nrf_port,
-                            "NRF_API_VERSION": self._stored.nrf_api_version,
-                        },
-                    }
+        if self.service_name in container.get_plan().services:
+            container.add_layer(
+                "oai_smf",
+                {
+                    "services": {
+                        "oai_smf": {
+                            "override": "merge",
+                            "environment": {
+                                "NRF_FQDN": self._stored.nrf_host,
+                                "NRF_IPV4_ADDRESS": "127.0.0.1",
+                                "NRF_PORT": self._stored.nrf_port,
+                                "NRF_API_VERSION": self._stored.nrf_api_version,
+                                "AMF_IPV4_ADDRESS": "127.0.0.1",
+                                "AMF_PORT": self._stored.amf_port,
+                                "AMF_API_VERSION": self._stored.amf_api_version,
+                                "AMF_FQDN": self._stored.amf_host,
+                            },
+                        }
+                    },
                 },
-            },
-            combine=True,
-        )
+                combine=True,
+            )
 
     def _start_service(self, container_name, service_name):
         container = self.unit.get_container(container_name)
-        is_running = (
-            service_name in container.get_plan().services
-            and container.get_service(service_name).is_running()
-        )
-        if not is_running:
+        service_exists = service_name in container.get_plan().services
+        is_running = container.get_service(service_name).is_running()
+
+        if service_exists and not is_running:
+            logger.info(f"{container.get_plan()}")
             container.start(service_name)
+            time.sleep(30)
+            return True
 
     def _stop_service(self, container_name, service_name):
         container = self.unit.get_container(container_name)
@@ -257,6 +285,44 @@ class OaiSmfCharm(CharmBase):
         )
         if is_running:
             container.stop(service_name)
+
+    ####################################
+    # Utils - TCP Dump configuration
+    ####################################
+
+    def _update_tcpdump_service(self, event):
+        try:
+            self._configure_tcpdump_service()
+        except ConnectionError:
+            logger.info("pebble socket not available, deferring config-changed")
+            event.defer()
+            return
+        if self.config["start-tcpdump"]:
+            self._start_service("tcpdump", "tcpdump")
+        else:
+            self._stop_service("tcpdump", "tcpdump")
+
+    def _configure_tcpdump_service(self):
+        container = self.unit.get_container("tcpdump")
+        container.add_layer(
+            "tcpdump",
+            {
+                "summary": "tcpdump layer",
+                "description": "pebble config layer for tcpdump",
+                "services": {
+                    "tcpdump": {
+                        "override": "replace",
+                        "summary": "tcpdump",
+                        "command": f"/usr/sbin/tcpdump -i any -w /pcap_{self.app.name}.pcap",
+                        "environment": {
+                            "DEBIAN_FRONTEND": "noninteractive",
+                            "TZ": "Europe/Paris",
+                        },
+                    }
+                },
+            },
+            combine=True,
+        )
 
     ####################################
     # Utils - K8s authentication

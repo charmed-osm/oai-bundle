@@ -28,6 +28,9 @@ requires:
   amf:
     interface: amf
     limit: 1
+  spgwu:
+    interface: spgwu
+    limit: 1
 provides:
   gnb:
     interface: gnb
