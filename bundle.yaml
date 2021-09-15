@@ -4,12 +4,16 @@ applications:
     charm: ./oai-nrf-operator/nrf.charm
     scale: 1
     trust: true
+    options:
+      start-tcpdump: true
     resources:
       oai-nrf-image: rdefosseoai/oai-nrf:v1.1.0
       tcpdump-image: corfr/tcpdump:latest
   amf:
     charm: ./oai-amf-operator/amf.charm
     trust: true
+    options:
+      start-tcpdump: true
     resources:
       oai-amf-image: rdefosseoai/oai-amf:v1.1.0
       tcpdump-image: corfr/tcpdump:latest
@@ -18,13 +22,17 @@ applications:
     charm: ./oai-smf-operator/smf.charm
     scale: 1
     trust: true
+    options:
+      start-tcpdump: true
     resources:
-      oai-smf-image: rdefosseoai/oai-smf:v1.1.0
+      oai-smf-image: rdefosseoai/oai-smf:develop
       tcpdump-image: corfr/tcpdump:latest
   spgwu-tiny:
     charm: ./oai-spgwu-tiny-operator/spgwu-tiny.charm
     scale: 1
     trust: true
+    options:
+      start-tcpdump: true
     resources:
       oai-spgwu-tiny-image: rdefosseoai/oai-spgwu-tiny:v1.1.2
       tcpdump-image: corfr/tcpdump:latest
@@ -33,6 +41,20 @@ applications:
     scale: 1
     resources:
       oai-db-image: mysql:5.5
+  gnb:
+    charm: ./oai-gnb-operator/gnb.charm
+    scale: 1
+    trust: true
+    resources:
+      oai-gnb-image: rdefosseoai/oai-gnb:develop
+      tcpdump-image: corfr/tcpdump:latest
+  nr-ue:
+    charm: ./oai-nr-ue-operator/nr-ue.charm
+    scale: 1
+    trust: true
+    resources:
+      oai-nr-ue-image: rdefosseoai/oai-nr-ue:develop
+      tcpdump-image: corfr/tcpdump:latest
 relations:
   - - db:db
     - amf:db
@@ -44,3 +66,11 @@ relations:
     - amf:amf
   - - nrf:nrf
     - spgwu-tiny:nrf
+  - - spgwu-tiny:smf
+    - smf:smf
+  - - gnb:amf
+    - amf:amf
+  - - nr-ue:gnb
+    - gnb:gnb
+  - - spgwu-tiny:spgwu
+    - gnb:spgwu

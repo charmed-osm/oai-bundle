@@ -1,0 +1,16 @@
+# Copyright 2021 David Garcia
+# See LICENSE file for licensing details.
+#
+# TEMPLATE-TODO: change this example to suit your needs.
+# If you don't need a config, you can remove the file entirely.
+# It ties in to the example _on_config_changed handler in src/charm.py
+#
+# Learn more about config at: https://juju.is/docs/sdk/config
+
+options:
+  start-tcpdump:
+    default: False
+    description: |
+      start tcpdump collection to analyse but beware
+      it will take a lot of space in the container/persistent volume.
+    type: boolean

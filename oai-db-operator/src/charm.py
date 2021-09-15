@@ -125,12 +125,12 @@ class OaiDbCharm(CharmBase):
 
     def _start_service(self, container_name, service_name):
         container = self.unit.get_container(container_name)
-        is_running = (
-            service_name in container.get_plan().services
-            and container.get_service(service_name).is_running()
-        )
-        if not is_running:
+        service_exists = service_name in container.get_plan().services
+        is_running = container.get_service(service_name).is_running()
+
+        if service_exists and not is_running:
             container.start(service_name)
+            return True
 
     def _stop_service(self, container_name, service_name):
         container = self.unit.get_container(container_name)

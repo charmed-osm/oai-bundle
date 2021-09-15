@@ -34,7 +34,7 @@ HTTP1_PORT = 80
 HTTP2_PORT = 9090
 
 
-class OaiNrfCharm(CharmBase):
+class OaiGnbCharm(CharmBase):
     """Charm the service."""
 
     _stored = StoredState()
@@ -42,15 +42,23 @@ class OaiNrfCharm(CharmBase):
     def __init__(self, *args):
         super().__init__(*args)
         event_observer_mapping = {
-            self.on.nrf_pebble_ready: self._on_oai_nrf_pebble_ready,
+            self.on.gnb_pebble_ready: self._on_oai_gnb_pebble_ready,
             self.on.tcpdump_pebble_ready: self._on_tcpdump_pebble_ready,
             self.on.install: self._on_install,
             self.on.config_changed: self._on_config_changed,
-            self.on.nrf_relation_joined: self._provide_service_info,
+            self.on.gnb_relation_joined: self._provide_service_info,
+            self.on.amf_relation_changed: self._update_service,
+            self.on.amf_relation_broken: self._update_service,
+            self.on.spgwu_relation_changed: self._update_service,
+            self.on.spgwu_relation_broken: self._update_service,
         }
         for event, observer in event_observer_mapping.items():
             self.framework.observe(event, observer)
         self._stored.set_default(
+            amf_host=None,
+            amf_port=None,
+            amf_api_version=None,
+            spgwu_ready=False,
             _k8s_stateful_patched=False,
             _k8s_authed=False,
         )
@@ -61,13 +69,13 @@ class OaiNrfCharm(CharmBase):
 
     def _provide_service_info(self, event):
         if self.unit.is_leader() and self.is_service_running:
-            for relation in self.framework.model.relations["nrf"]:
-                logger.info(f"Found relation {relation.name} with id {relation.id}")
-                relation.data[self.app]["host"] = self.app.name
-                relation.data[self.app]["port"] = str(HTTP1_PORT)
-                relation.data[self.app]["api-version"] = "v1"
-            else:
-                logger.info("not relations found")
+            pod_ip = self.pod_ip
+            if pod_ip:
+                for relation in self.framework.model.relations["gnb"]:
+                    logger.info(f"Found relation {relation.name} with id {relation.id}")
+                    relation.data[self.app]["host"] = str(pod_ip)
+                else:
+                    logger.info("not relations found")
 
     ####################################
     # Observers - Charm Events
@@ -79,8 +87,9 @@ class OaiNrfCharm(CharmBase):
         K8sServicePatch.set_ports(
             self.app.name,
             [
-                ("http1", 80, 80, "TCP"),
-                ("http2", 9090, 9090, "TCP"),
+                ("s1c", 36412, 36412, "UDP"),
+                ("s1u", 2152, 2152, "UDP"),
+                ("x2c", 36422, 36422, "UDP"),
             ],
         )
 
@@ -91,35 +100,47 @@ class OaiNrfCharm(CharmBase):
     # Observers - Pebble Events
     ####################################
 
-    def _on_oai_nrf_pebble_ready(self, event):
+    def _on_oai_gnb_pebble_ready(self, event):
+        pod_ip = self.pod_ip
+        if not pod_ip:
+            event.defer()
+            return
         container = event.workload
-        entrypoint = "/bin/bash /openair-nrf/bin/entrypoint.sh"
+        entrypoint = "/opt/oai-gnb/bin/entrypoint.sh"
         command = " ".join(
-            ["/openair-nrf/bin/oai_nrf", "-c", "/openair-nrf/etc/nrf.conf", "-o"]
+            ["/opt/oai-gnb/bin/nr-softmodem.Rel15", "-O", "/opt/oai-gnb/etc/gnb.conf"]
         )
         pebble_layer = {
-            "summary": "oai_nrf layer",
-            "description": "pebble config layer for oai_nrf",
+            "summary": "oai_gnb layer",
+            "description": "pebble config layer for oai_gnb",
             "services": {
-                "oai_nrf": {
+                "oai_gnb": {
                     "override": "replace",
-                    "summary": "oai_nrf",
+                    "summary": "oai_gnb",
                     "command": f"{entrypoint} {command}",
                     "environment": {
-                        "DEBIAN_FRONTEND": "noninteractive",
                         "TZ": "Europe/Paris",
-                        "INSTANCE": "0",
-                        "PID_DIRECTORY": "/var/run",
-                        "NRF_INTERFACE_NAME_FOR_SBI": "eth0",
-                        "NRF_INTERFACE_PORT_FOR_SBI": "80",
-                        "NRF_INTERFACE_HTTP2_PORT_FOR_SBI": "9090",
-                        "NRF_API_VERSION": "v1",
+                        "RFSIMULATOR": "server",
+                        "USE_SA_TDD_MONO": "yes",
+                        "GNB_NAME": "gnb-rfsim",
+                        "MCC": "208",
+                        "MNC": "95",
+                        "MNC_LENGTH": "2",
+                        "TAC": "1",
+                        "NSSAI_SST": "1",
+                        "NSSAI_SD0": "1",
+                        "NSSAI_SD1": "112233",
+                        "GNB_NGA_IF_NAME": "eth0",
+                        "GNB_NGA_IP_ADDRESS": str(pod_ip),
+                        "GNB_NGU_IF_NAME": "eth0",
+                        "GNB_NGU_IP_ADDRESS": str(pod_ip),
+                        "USE_ADDITIONAL_OPTIONS": "--sa -E --rfsim",
                     },
                 }
             },
         }
         try:
-            container.add_layer("oai_nrf", pebble_layer, combine=True)
+            container.add_layer("oai_gnb", pebble_layer, combine=True)
             self._update_service(event)
         except ConnectionError:
             logger.info("pebble socket not available, deferring config-changed")
@@ -134,23 +155,34 @@ class OaiNrfCharm(CharmBase):
     ####################################
 
     @property
+    def is_amf_ready(self):
+        return (
+            self._stored.amf_host
+            and self._stored.amf_port
+            and self._stored.amf_api_version
+        )
+
+    @property
+    def is_spgwu_ready(self):
+        return self._stored.spgwu_ready
+
+    @property
     def namespace(self) -> str:
         with open("/var/run/secrets/kubernetes.io/serviceaccount/namespace", "r") as f:
             return f.read().strip()
 
     @property
     def pod_ip(self) -> Optional[IPv4Address]:
-        return IPv4Address(
-            check_output(["unit-get", "private-address"]).decode().strip()
-        )
+        ip = check_output(["unit-get", "private-address"]).decode().strip()
+        return IPv4Address(ip) if ip else None
 
     @property
     def container_name(self):
-        return "nrf"
+        return "gnb"
 
     @property
     def service_name(self):
-        return "oai_nrf"
+        return "oai_gnb"
 
     @property
     def is_service_running(self):
@@ -165,9 +197,59 @@ class OaiNrfCharm(CharmBase):
     ####################################
 
     def _update_service(self, event):
-        self._start_service(container_name="nrf", service_name="oai_nrf")
-        self._provide_service_info(event)
-        self.unit.status = ActiveStatus()
+        self._load_amf_data()
+        self._load_spgwu_data()
+        if self.is_amf_ready and self.is_spgwu_ready:
+            try:
+                self._configure_service()
+            except ConnectionError:
+                logger.info("pebble socket not available, deferring config-changed")
+                event.defer()
+                return
+            if self._start_service(container_name="gnb", service_name="oai_gnb"):
+                self._provide_service_info(event)
+                self.unit.status = ActiveStatus()
+        else:
+            self._stop_service(container_name="gnb", service_name="oai_gnb")
+            self.unit.status = BlockedStatus("need amf and spgwu relations")
+
+    def _load_amf_data(self):
+        relation = self.framework.model.get_relation("amf")
+        if relation and relation.app in relation.data:
+            relation_data = relation.data[relation.app]
+            self._stored.amf_host = relation_data.get("ip-address")
+            self._stored.amf_port = relation_data.get("port")
+            self._stored.amf_api_version = relation_data.get("api-version")
+        else:
+            self._stored.amf_host = None
+            self._stored.amf_port = None
+            self._stored.amf_api_version = None
+
+    def _load_spgwu_data(self):
+        relation = self.framework.model.get_relation("spgwu")
+        if relation and relation.app in relation.data:
+            relation_data = relation.data[relation.app]
+            self._stored.spgwu_ready = relation_data.get("ready") == "True"
+        else:
+            self._stored.spgwu_ready = False
+
+    def _configure_service(self):
+        container = self.unit.get_container("gnb")
+        if self.service_name in container.get_plan().services:
+            container.add_layer(
+                "oai_gnb",
+                {
+                    "services": {
+                        "oai_gnb": {
+                            "override": "merge",
+                            "environment": {
+                                "AMF_IP_ADDRESS": self._stored.amf_host,
+                            },
+                        }
+                    },
+                },
+                combine=True,
+            )
 
     def _start_service(self, container_name, service_name):
         container = self.unit.get_container(container_name)
@@ -227,7 +309,7 @@ class OaiNrfCharm(CharmBase):
 
     ####################################
     # Utils - K8s authentication
-    ####################################
+    ###########################
 
     def _k8s_auth(self) -> bool:
         """Authenticate to kubernetes."""
@@ -271,4 +353,4 @@ class OaiNrfCharm(CharmBase):
 
 
 if __name__ == "__main__":
-    main(OaiNrfCharm, use_juju_for_storage=True)
+    main(OaiGnbCharm)

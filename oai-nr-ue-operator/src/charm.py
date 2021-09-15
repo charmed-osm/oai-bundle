@@ -34,7 +34,7 @@ HTTP1_PORT = 80
 HTTP2_PORT = 9090
 
 
-class OaiNrfCharm(CharmBase):
+class OaiNrUeCharm(CharmBase):
     """Charm the service."""
 
     _stored = StoredState()
@@ -42,32 +42,22 @@ class OaiNrfCharm(CharmBase):
     def __init__(self, *args):
         super().__init__(*args)
         event_observer_mapping = {
-            self.on.nrf_pebble_ready: self._on_oai_nrf_pebble_ready,
+            self.on.nr_ue_pebble_ready: self._on_oai_nr_ue_pebble_ready,
             self.on.tcpdump_pebble_ready: self._on_tcpdump_pebble_ready,
             self.on.install: self._on_install,
             self.on.config_changed: self._on_config_changed,
-            self.on.nrf_relation_joined: self._provide_service_info,
+            self.on.gnb_relation_changed: self._update_service,
+            self.on.gnb_relation_broken: self._update_service,
         }
         for event, observer in event_observer_mapping.items():
             self.framework.observe(event, observer)
         self._stored.set_default(
+            gnb_host=None,
+            gnb_port=None,
+            gnb_api_version=None,
             _k8s_stateful_patched=False,
             _k8s_authed=False,
         )
-
-    ####################################
-    # Observers - Relation Events
-    ####################################
-
-    def _provide_service_info(self, event):
-        if self.unit.is_leader() and self.is_service_running:
-            for relation in self.framework.model.relations["nrf"]:
-                logger.info(f"Found relation {relation.name} with id {relation.id}")
-                relation.data[self.app]["host"] = self.app.name
-                relation.data[self.app]["port"] = str(HTTP1_PORT)
-                relation.data[self.app]["api-version"] = "v1"
-            else:
-                logger.info("not relations found")
 
     ####################################
     # Observers - Charm Events
@@ -79,8 +69,9 @@ class OaiNrfCharm(CharmBase):
         K8sServicePatch.set_ports(
             self.app.name,
             [
-                ("http1", 80, 80, "TCP"),
-                ("http2", 9090, 9090, "TCP"),
+                ("s1c", 36412, 36412, "UDP"),
+                ("s1u", 2152, 2152, "UDP"),
+                ("x2c", 36422, 36422, "UDP"),
             ],
         )
 
@@ -91,35 +82,39 @@ class OaiNrfCharm(CharmBase):
     # Observers - Pebble Events
     ####################################
 
-    def _on_oai_nrf_pebble_ready(self, event):
+    def _on_oai_nr_ue_pebble_ready(self, event):
         container = event.workload
-        entrypoint = "/bin/bash /openair-nrf/bin/entrypoint.sh"
+        entrypoint = "/opt/oai-nr-ue/bin/entrypoint.sh"
         command = " ".join(
-            ["/openair-nrf/bin/oai_nrf", "-c", "/openair-nrf/etc/nrf.conf", "-o"]
+            [
+                "/opt/oai-nr-ue/bin/nr-uesoftmodem.Rel15",
+                "-O",
+                "/opt/oai-nr-ue/etc/nr-ue-sim.conf",
+            ]
         )
         pebble_layer = {
-            "summary": "oai_nrf layer",
-            "description": "pebble config layer for oai_nrf",
+            "summary": "oai_nr_ue layer",
+            "description": "pebble config layer for oai_nr_ue",
             "services": {
-                "oai_nrf": {
+                "oai_nr_ue": {
                     "override": "replace",
-                    "summary": "oai_nrf",
+                    "summary": "oai_nr_ue",
                     "command": f"{entrypoint} {command}",
                     "environment": {
-                        "DEBIAN_FRONTEND": "noninteractive",
                         "TZ": "Europe/Paris",
-                        "INSTANCE": "0",
-                        "PID_DIRECTORY": "/var/run",
-                        "NRF_INTERFACE_NAME_FOR_SBI": "eth0",
-                        "NRF_INTERFACE_PORT_FOR_SBI": "80",
-                        "NRF_INTERFACE_HTTP2_PORT_FOR_SBI": "9090",
-                        "NRF_API_VERSION": "v1",
+                        "FULL_IMSI": "208950000000031",
+                        "FULL_KEY": "0C0A34601D4F07677303652C0462535B",
+                        "OPC": "63bfa50ee6523365ff14c1f45f88737d",
+                        "DNN": "oai",
+                        "NSSAI_SST": "1",
+                        "NSSAI_SD": "1",
+                        "USE_ADDITIONAL_OPTIONS": "-E --sa --rfsim -r 106 --numerology 1 -C 3619200000 --nokrnmod",
                     },
                 }
             },
         }
         try:
-            container.add_layer("oai_nrf", pebble_layer, combine=True)
+            container.add_layer("oai_nr_ue", pebble_layer, combine=True)
             self._update_service(event)
         except ConnectionError:
             logger.info("pebble socket not available, deferring config-changed")
@@ -134,6 +129,10 @@ class OaiNrfCharm(CharmBase):
     ####################################
 
     @property
+    def is_gnb_ready(self):
+        return self._stored.gnb_host
+
+    @property
     def namespace(self) -> str:
         with open("/var/run/secrets/kubernetes.io/serviceaccount/namespace", "r") as f:
             return f.read().strip()
@@ -143,14 +142,13 @@ class OaiNrfCharm(CharmBase):
         return IPv4Address(
             check_output(["unit-get", "private-address"]).decode().strip()
         )
-
     @property
     def container_name(self):
-        return "nrf"
+        return "nr-ue"
 
     @property
     def service_name(self):
-        return "oai_nrf"
+        return "oai_nr_ue"
 
     @property
     def is_service_running(self):
@@ -165,9 +163,49 @@ class OaiNrfCharm(CharmBase):
     ####################################
 
     def _update_service(self, event):
-        self._start_service(container_name="nrf", service_name="oai_nrf")
-        self._provide_service_info(event)
-        self.unit.status = ActiveStatus()
+        self._load_gnb_data()
+        if self.is_gnb_ready:
+            try:
+                self._configure_service()
+            except ConnectionError:
+                logger.info("pebble socket not available, deferring config-changed")
+                event.defer()
+                return
+            self._start_service(container_name="nr-ue", service_name="oai_nr_ue")
+            self.unit.status = ActiveStatus()
+        else:
+            self._stop_service(container_name="nr-ue", service_name="oai_nr_ue")
+            self.unit.status = BlockedStatus("need gnb relation")
+
+    def _load_gnb_data(self):
+        relation = self.framework.model.get_relation("gnb")
+        if relation and relation.app in relation.data:
+            relation_data = relation.data[relation.app]
+            self._stored.gnb_host = relation_data.get("host")
+            self._stored.gnb_port = relation_data.get("port")
+            self._stored.gnb_api_version = relation_data.get("api-version")
+        else:
+            self._stored.gnb_host = None
+            self._stored.gnb_port = None
+            self._stored.gnb_api_version = None
+
+    def _configure_service(self):
+        container = self.unit.get_container("nr-ue")
+        if self.service_name in container.get_plan().services:
+            container.add_layer(
+                "oai_nr_ue",
+                {
+                    "services": {
+                        "oai_nr_ue": {
+                            "override": "merge",
+                            "environment": {
+                                "RFSIMULATOR": self._stored.gnb_host,
+                            },
+                        }
+                    },
+                },
+                combine=True,
+            )
 
     def _start_service(self, container_name, service_name):
         container = self.unit.get_container(container_name)
@@ -227,7 +265,7 @@ class OaiNrfCharm(CharmBase):
 
     ####################################
     # Utils - K8s authentication
-    ####################################
+    ###########################
 
     def _k8s_auth(self) -> bool:
         """Authenticate to kubernetes."""
@@ -271,4 +309,4 @@ class OaiNrfCharm(CharmBase):
 
 
 if __name__ == "__main__":
-    main(OaiNrfCharm, use_juju_for_storage=True)
+    main(OaiNrUeCharm)

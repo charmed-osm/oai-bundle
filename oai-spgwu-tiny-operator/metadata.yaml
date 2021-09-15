@@ -27,3 +27,10 @@ resources:
 requires:
   nrf:
     interface: nrf
+    limit: 1
+  smf:
+    interface: smf
+    limit: 1
+provides:
+  spgwu:
+    interface: spgwu
