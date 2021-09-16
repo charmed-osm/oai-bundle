@@ -39,6 +39,7 @@ applications:
   db:
     charm: ./oai-db-operator/db.charm
     scale: 1
+    trust: true
     resources:
       oai-db-image: mysql:5.5
   gnb:
