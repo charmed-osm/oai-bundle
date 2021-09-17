@@ -321,6 +321,8 @@ class OaiAmfCharm(CharmBase):
             else False
         )
 
+        logger.info(f"service {service_name} exists: {service_exists}")
+        logger.info(f"container {container_name} is running: {is_running}")
         if service_exists and not is_running:
             logger.info(f"{container.get_plan()}")
             container.start(service_name)

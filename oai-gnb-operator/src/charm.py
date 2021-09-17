@@ -110,6 +110,14 @@ class OaiGnbCharm(CharmBase):
         command = " ".join(
             ["/opt/oai-gnb/bin/nr-softmodem.Rel15", "-O", "/opt/oai-gnb/etc/gnb.conf"]
         )
+        # Patch file to have unique GNB ID
+        gnb_id = self.unit.name[::-1].split("/")[0][::-1]
+        gnb_sa_tdd_conf = (
+            container.pull("/opt/oai-gnb/etc/gnb.sa.tdd.conf")
+            .read()
+            .replace("0xe00", f"0xe0{gnb_id}")
+        )
+        container.push("/opt/oai-gnb/etc/gnb.sa.tdd.conf", gnb_sa_tdd_conf)
         pebble_layer = {
             "summary": "oai_gnb layer",
             "description": "pebble config layer for oai_gnb",
@@ -122,7 +130,7 @@ class OaiGnbCharm(CharmBase):
                         "TZ": "Europe/Paris",
                         "RFSIMULATOR": "server",
                         "USE_SA_TDD_MONO": "yes",
-                        "GNB_NAME": "gnb-rfsim",
+                        "GNB_NAME": f'gnb-rfsim-{self.unit.name.replace("/", "-")}',
                         "MCC": "208",
                         "MNC": "95",
                         "MNC_LENGTH": "2",
@@ -207,17 +215,17 @@ class OaiGnbCharm(CharmBase):
         if self.is_amf_ready and self.is_spgwu_ready:
             try:
                 self._configure_service()
+                if self._start_service(container_name="gnb", service_name="oai_gnb"):
+                    self.unit.status = WaitingStatus(
+                        "waiting 30 seconds for the service to start"
+                    )
+                    time.sleep(30)
+                    self._provide_service_info(event)
+                    self.unit.status = ActiveStatus()
             except ConnectionError:
                 logger.info("pebble socket not available, deferring config-changed")
                 event.defer()
                 return
-            if self._start_service(container_name="gnb", service_name="oai_gnb"):
-                self.unit.status = WaitingStatus(
-                    "waiting 30 seconds for the service to start"
-                )
-                time.sleep(30)
-                self._provide_service_info(event)
-                self.unit.status = ActiveStatus()
         else:
             self._stop_service(container_name="gnb", service_name="oai_gnb")
             self.unit.status = BlockedStatus("need amf and spgwu relations")
@@ -268,7 +276,8 @@ class OaiGnbCharm(CharmBase):
             if service_exists
             else False
         )
-
+        logger.info(f"service {service_name} exists: {service_exists}")
+        logger.info(f"container {container_name} is running: {is_running}")
         if service_exists and not is_running:
             logger.info(f"{container.get_plan()}")
             container.start(service_name)
