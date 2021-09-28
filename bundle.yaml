@@ -1,61 +1,49 @@
 bundle: kubernetes
+name: oai
 applications:
-  nrf:
-    charm: ./oai-nrf-operator/nrf.charm
-    scale: 1
-    trust: true
-    options:
-      start-tcpdump: false
-    resources:
-      oai-nrf-image: rdefosseoai/oai-nrf:v1.1.0
-      tcpdump-image: corfr/tcpdump:latest
-  amf:
-    charm: ./oai-amf-operator/amf.charm
-    trust: true
-    options:
-      start-tcpdump: false
-    resources:
-      oai-amf-image: rdefosseoai/oai-amf:v1.1.0
-      tcpdump-image: corfr/tcpdump:latest
-    scale: 1
-  smf:
-    charm: ./oai-smf-operator/smf.charm
-    scale: 1
-    trust: true
-    options:
-      start-tcpdump: false
-    resources:
-      oai-smf-image: rdefosseoai/oai-smf:develop
-      tcpdump-image: corfr/tcpdump:latest
-  spgwu-tiny:
-    charm: ./oai-spgwu-tiny-operator/spgwu-tiny.charm
-    scale: 1
-    trust: true
-    options:
-      start-tcpdump: false
-    resources:
-      oai-spgwu-tiny-image: rdefosseoai/oai-spgwu-tiny:v1.1.2
-      tcpdump-image: corfr/tcpdump:latest
   db:
-    charm: ./oai-db-operator/db.charm
+    charm: ch:oai-db
     scale: 1
+    channel: edge
     trust: true
-    resources:
-      oai-db-image: mysql:5.5
+  nrf:
+    charm: ch:oai-nrf
+    scale: 1
+    channel: edge
+    trust: true
+    options:
+      start-tcpdump: false
+  amf:
+    charm: ch:oai-amf
+    trust: true
+    options:
+      start-tcpdump: false
+    scale: 1
+    channel: edge
+  smf:
+    charm: ch:oai-smf
+    scale: 1
+    channel: edge
+    trust: true
+    options:
+      start-tcpdump: false
+  spgwu-tiny:
+    charm: ch:oai-spgwu-tiny
+    scale: 1
+    channel: edge
+    trust: true
+    options:
+      start-tcpdump: false
   gnb:
-    charm: ./oai-gnb-operator/gnb.charm
-    scale: 2
-    trust: true
-    resources:
-      oai-gnb-image: rdefosseoai/oai-gnb:develop
-      tcpdump-image: corfr/tcpdump:latest
-  nr-ue:
-    charm: ./oai-nr-ue-operator/nr-ue.charm
+    charm: ch:oai-gnb
     scale: 1
+    channel: edge
     trust: true
-    resources:
-      oai-nr-ue-image: rdefosseoai/oai-nr-ue:develop
-      tcpdump-image: corfr/tcpdump:latest
+  nr-ue:
+    charm: ch:oai-nr-ue
+    scale: 1
+    channel: edge
+    trust: true
 relations:
   - - db:db
     - amf:db
@@ -71,7 +59,7 @@ relations:
     - smf:smf
   - - gnb:amf
     - amf:amf
-  - - nr-ue:gnb
-    - gnb:gnb
   - - spgwu-tiny:spgwu
     - gnb:spgwu
+  - - nr-ue:gnb
+    - gnb:gnb
