@@ -4,12 +4,9 @@
 # For a complete list of supported options, see:
 # https://discourse.charmhub.io/t/charm-metadata-v2/3674/15
 name: oai-spgwu-tiny
-display-name: |
-  TEMPLATE-TODO: fill out a display name for the Charmcraft store
-description: |
-  TEMPLATE-TODO: fill out the charm's description
-summary: |
-  TEMPLATE-TODO: fill out the charm's summary
+display-name: OAI spgwu-tiny
+description: OAI spgwu-tiny
+summary: OAI spgwu-tiny
 
 containers:
   spgwu-tiny:

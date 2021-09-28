@@ -4,12 +4,9 @@
 # For a complete list of supported options, see:
 # https://discourse.charmhub.io/t/charm-metadata-v2/3674/15
 name: oai-db
-display-name: |
-  TEMPLATE-TODO: fill out a display name for the Charmcraft store
-description: |
-  TEMPLATE-TODO: fill out the charm's description
-summary: |
-  TEMPLATE-TODO: fill out the charm's summary
+display-name: OAI DB
+description: OAI mysql database
+summary: OAI mysql database
 
 containers:
   db:
@@ -18,7 +15,7 @@ containers:
 resources:
   oai-db-image:
     type: oci-image
-    description: OCI image for oai-nrf (davigar15/oai-test-db:latest)
+    description: OCI image for oai-nrf
 provides:
   db:
     interface: mysql

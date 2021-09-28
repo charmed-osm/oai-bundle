@@ -12,78 +12,195 @@ develop a new k8s charm using the Operator Framework:
     https://discourse.charmhub.io/t/4208
 """
 
-from ipaddress import IPv4Address
 import logging
-from subprocess import check_output
-from typing import Optional
 import time
 
-from kubernetes import kubernetes
-from ops.charm import CharmBase
-from ops.framework import StoredState
 from ops.main import main
-from ops.model import ActiveStatus, BlockedStatus, MaintenanceStatus, WaitingStatus
+from ops.model import ActiveStatus, BlockedStatus, WaitingStatus
 from ops.pebble import ConnectionError
 
-from kubernetes_service import K8sServicePatch, PatchFailed
+from utils import OaiCharm
 
 logger = logging.getLogger(__name__)
 
-SCTP_PORT = 38412
-HTTP1_PORT = 80
-HTTP2_PORT = 9090
+S1C_PORT = 36412
+S1U_PORT = 2152
+X2C_PORT = 36422
 
 
-class OaiNrUeCharm(CharmBase):
+class OaiNrUeCharm(OaiCharm):
     """Charm the service."""
 
-    _stored = StoredState()
-
     def __init__(self, *args):
-        super().__init__(*args)
+        super().__init__(
+            *args,
+            tcpdump=True,
+            ports=[
+                ("s1c", S1C_PORT, S1C_PORT, "UDP"),
+                ("s1u", S1U_PORT, S1U_PORT, "UDP"),
+                ("x2c", X2C_PORT, X2C_PORT, "UDP"),
+            ],
+            privileged=True,
+            container_name="nr-ue",
+            service_name="oai_nr_ue",
+        )
+        # Observe charm events
         event_observer_mapping = {
             self.on.nr_ue_pebble_ready: self._on_oai_nr_ue_pebble_ready,
-            self.on.tcpdump_pebble_ready: self._on_tcpdump_pebble_ready,
-            self.on.install: self._on_install,
+            # self.on.stop: self._on_stop,
             self.on.config_changed: self._on_config_changed,
             self.on.gnb_relation_changed: self._update_service,
             self.on.gnb_relation_broken: self._update_service,
+            self.on.start_action: self._on_start_action,
+            self.on.stop_action: self._on_stop_action,
         }
         for event, observer in event_observer_mapping.items():
             self.framework.observe(event, observer)
+        # Set defaults in Stored State for the relation data
         self._stored.set_default(
             gnb_host=None,
             gnb_port=None,
             gnb_api_version=None,
-            _k8s_stateful_patched=False,
-            _k8s_authed=False,
+            ue_registered=False,
         )
 
-    ####################################
-    # Observers - Charm Events
-    ####################################
-
-    def _on_install(self, event):
-        self._k8s_auth()
-        self._patch_stateful_set()
-        K8sServicePatch.set_ports(
-            self.app.name,
-            [
-                ("s1c", 36412, 36412, "UDP"),
-                ("s1u", 2152, 2152, "UDP"),
-                ("x2c", 36422, 36422, "UDP"),
-            ],
-        )
-
-    def _on_config_changed(self, event):
-        self._update_tcpdump_service(event)
+    @property
+    def imsi(self):
+        return "208950000000031"
 
     ####################################
-    # Observers - Pebble Events
+    # Charm Events handlers
     ####################################
 
     def _on_oai_nr_ue_pebble_ready(self, event):
-        container = event.workload
+        try:
+            container = event.workload
+            self._add_oai_nr_ue_layer(container)
+            self._update_service(event)
+        except ConnectionError:
+            logger.info("pebble socket not available, deferring config-changed")
+            event.defer()
+
+    def _on_stop(self, event):
+        pass
+
+    def _on_config_changed(self, event):
+        self.update_tcpdump_service(event)
+
+    def _update_service(self, event):
+        try:
+            if not self.unit.is_leader():
+                logger.warning("HA is not supported")
+                self.unit.status = BlockedStatus("HA is not supported")
+                return
+            logger.info("Updating service...")
+            if not self.service_exists():
+                logger.warning("service does not exist")
+                return
+            # Load data from dependent relations
+            self._load_gnb_data()
+            relations_ready = self.is_gnb_ready
+            if not relations_ready:
+                self.unit.status = BlockedStatus("need gnb relation")
+                if self.is_service_running():
+                    self.stop_service()
+                return
+            else:
+                if not self.is_service_running():
+                    self._configure_service()
+                    time.sleep(10)
+                    self._backup_conf_files()
+                    self.start_service()
+                relation = self.framework.model.get_relation("gnb")
+                if self._stored.ue_registered:
+                    if relation and self.app in relation.data:
+                        relation.data[self.app]["ue-status"] = "registered"
+                else:
+                    if relation and self.app in relation.data:
+                        relation.data[self.app]["ue-imsi"] = self.imsi
+                        relation.data[self.app]["ue-status"] = "started"
+            if self._stored.ue_registered:
+                self.unit.status = ActiveStatus("registered")
+            else:
+                self.unit.status = WaitingStatus("waiting for registration")
+        except ConnectionError:
+            logger.info("pebble socket not available, deferring config-changed")
+            event.defer()
+
+    def _on_start_action(self, event):
+        try:
+            if not self.service_exists():
+                event.set_results({"output": "service does not exist yet"})
+                return
+            if not self.is_service_running():
+                self.start_service()
+                event.set_results({"output": "service has been started successfully"})
+            else:
+                event.set_results({"output": "service is already running"})
+        except Exception as e:
+            event.fail(f"Action failed. Reason: {e}")
+
+    def _on_stop_action(self, event):
+        try:
+            if not self.service_exists():
+                event.set_results({"output": "service does not exist yet"})
+                return
+            if self.is_service_running():
+                self.stop_service()
+                self._restore_conf_files()
+                event.set_results({"output": "service has been stopped successfully"})
+            else:
+                event.set_results({"output": "service is already stopped"})
+        except Exception as e:
+            event.fail(f"Action failed. Reason: {e}")
+
+    ####################################
+    # Utils - Services and configuration
+    ####################################
+
+    @property
+    def is_gnb_ready(self):
+        is_ready = self._stored.gnb_host
+        logger.info(f'gnb is{" " if is_ready else " not "}ready')
+        return is_ready
+
+    def _load_gnb_data(self):
+        logger.debug("Loading gnb data from relation")
+        relation = self.framework.model.get_relation("gnb")
+        if relation and relation.app in relation.data:
+            self._stored.gnb_host = relation.data[relation.app].get("host")
+            self._stored.ue_registered = (
+                relation.data[relation.app].get(self.imsi) == "registered"
+            )
+            logger.info("gnb data loaded")
+        else:
+            self._stored.gnb_host = None
+            self._stored.ue_registered = False
+            logger.warning("no relation found")
+
+    def _configure_service(self):
+        if not self.service_exists():
+            logger.debug("Cannot configure service: service does not exist yet")
+            return
+        logger.debug("Configuring nr-ue service")
+        container = self.unit.get_container("nr-ue")
+        container.add_layer(
+            "oai_nr_ue",
+            {
+                "services": {
+                    "oai_nr_ue": {
+                        "override": "merge",
+                        "environment": {
+                            "RFSIMULATOR": self._stored.gnb_host,
+                        },
+                    }
+                },
+            },
+            combine=True,
+        )
+        logger.info("nr-ue service configured")
+
+    def _add_oai_nr_ue_layer(self, container):
         entrypoint = "/opt/oai-nr-ue/bin/entrypoint.sh"
         command = " ".join(
             [
@@ -102,7 +219,7 @@ class OaiNrUeCharm(CharmBase):
                     "command": f"{entrypoint} {command}",
                     "environment": {
                         "TZ": "Europe/Paris",
-                        "FULL_IMSI": "208950000000031",
+                        "FULL_IMSI": self.imsi,
                         "FULL_KEY": "0C0A34601D4F07677303652C0462535B",
                         "OPC": "63bfa50ee6523365ff14c1f45f88737d",
                         "DNN": "oai",
@@ -113,205 +230,24 @@ class OaiNrUeCharm(CharmBase):
                 }
             },
         }
-        try:
-            container.add_layer("oai_nr_ue", pebble_layer, combine=True)
-            self._update_service(event)
-        except ConnectionError:
-            logger.info("pebble socket not available, deferring config-changed")
-            event.defer()
-            return
+        container.add_layer("oai_nr_ue", pebble_layer, combine=True)
+        logger.info("oai_nr_ue layer added")
 
-    def _on_tcpdump_pebble_ready(self, event):
-        self._update_tcpdump_service(event)
-
-    ####################################
-    # Properties
-    ####################################
-
-    @property
-    def is_gnb_ready(self):
-        is_ready = self._stored.gnb_host
-        logger.info(f'gnb is{" " if is_ready else " not "}ready')
-        return is_ready
-
-    @property
-    def namespace(self) -> str:
-        with open("/var/run/secrets/kubernetes.io/serviceaccount/namespace", "r") as f:
-            return f.read().strip()
-
-    @property
-    def pod_ip(self) -> Optional[IPv4Address]:
-        return IPv4Address(
-            check_output(["unit-get", "private-address"]).decode().strip()
-        )
-
-    @property
-    def container_name(self):
-        return "nr-ue"
-
-    @property
-    def service_name(self):
-        return "oai_nr_ue"
-
-    @property
-    def is_service_running(self):
-        container = self.unit.get_container(self.container_name)
-        return (
-            self.service_name in container.get_plan().services
-            and container.get_service(self.service_name).is_running()
-        )
-
-    ####################################
-    # Utils - Services and configuration
-    ####################################
-
-    def _update_service(self, event):
-        self._load_gnb_data()
-        if self.is_gnb_ready:
-            try:
-                self._configure_service()
-            except ConnectionError:
-                logger.info("pebble socket not available, deferring config-changed")
-                event.defer()
-                return
-            self._start_service(container_name="nr-ue", service_name="oai_nr_ue")
-            self.unit.status = ActiveStatus()
-        else:
-            self._stop_service(container_name="nr-ue", service_name="oai_nr_ue")
-            self.unit.status = BlockedStatus("need gnb relation")
-
-    def _load_gnb_data(self):
-        relation = self.framework.model.get_relation("gnb")
-        if relation and relation.app in relation.data:
-            self._stored.gnb_host = relation.data[relation.app].get("host")
-        else:
-            self._stored.gnb_host = None
-
-    def _configure_service(self):
+    def _backup_conf_files(self):
         container = self.unit.get_container("nr-ue")
-        if self.service_name in container.get_plan().services:
-            container.add_layer(
-                "oai_nr_ue",
-                {
-                    "services": {
-                        "oai_nr_ue": {
-                            "override": "merge",
-                            "environment": {
-                                "RFSIMULATOR": self._stored.gnb_host,
-                            },
-                        }
-                    },
-                },
-                combine=True,
-            )
+        root_folder = "/opt/oai-nr-ue"
+        files = {f"{root_folder}/etc/nr-ue-sim.conf"}
+        for file in files:
+            file_content = container.pull(file).read()
+            container.push(f"{file}_bkp", file_content)
 
-    def _start_service(self, container_name, service_name):
-        container = self.unit.get_container(container_name)
-        service_exists = service_name in container.get_plan().services
-        is_running = (
-            container.get_service(service_name).is_running()
-            if service_exists
-            else False
-        )
-
-        logger.info(f"service {service_name} exists: {service_exists}")
-        logger.info(f"container {container_name} is running: {is_running}")
-        if service_exists and not is_running:
-            logger.info(f"{container.get_plan()}")
-            container.start(service_name)
-            return True
-
-    def _stop_service(self, container_name, service_name):
-        container = self.unit.get_container(container_name)
-        is_running = (
-            service_name in container.get_plan().services
-            and container.get_service(service_name).is_running()
-        )
-        if is_running:
-            container.stop(service_name)
-
-    ####################################
-    # Utils - TCP Dump configuration
-    ####################################
-
-    def _update_tcpdump_service(self, event):
-        try:
-            self._configure_tcpdump_service()
-        except ConnectionError:
-            logger.info("pebble socket not available, deferring config-changed")
-            event.defer()
-            return
-        if self.config["start-tcpdump"]:
-            self._start_service("tcpdump", "tcpdump")
-        else:
-            self._stop_service("tcpdump", "tcpdump")
-
-    def _configure_tcpdump_service(self):
-        container = self.unit.get_container("tcpdump")
-        container.add_layer(
-            "tcpdump",
-            {
-                "summary": "tcpdump layer",
-                "description": "pebble config layer for tcpdump",
-                "services": {
-                    "tcpdump": {
-                        "override": "replace",
-                        "summary": "tcpdump",
-                        "command": f"/usr/sbin/tcpdump -i any -w /pcap_{self.app.name}.pcap",
-                        "environment": {
-                            "DEBIAN_FRONTEND": "noninteractive",
-                            "TZ": "Europe/Paris",
-                        },
-                    }
-                },
-            },
-            combine=True,
-        )
-
-    ####################################
-    # Utils - K8s authentication
-    ###########################
-
-    def _k8s_auth(self) -> bool:
-        """Authenticate to kubernetes."""
-        if self._stored._k8s_authed:
-            return True
-        kubernetes.config.load_incluster_config()
-        self._stored._k8s_authed = True
-
-    def _patch_stateful_set(self) -> None:
-        """Patch the StatefulSet to include specific ServiceAccount and Secret mounts"""
-        if self._stored._k8s_stateful_patched:
-            return
-
-        # Get an API client
-        api = kubernetes.client.AppsV1Api(kubernetes.client.ApiClient())
-        for attempt in range(5):
-            try:
-                self.unit.status = MaintenanceStatus(
-                    f"patching StatefulSet for additional k8s permissions. Attempt {attempt+1}/5"
-                )
-                s = api.read_namespaced_stateful_set(
-                    name=self.app.name, namespace=self.namespace
-                )
-                # Add the required security context to the container spec
-                s.spec.template.spec.containers[1].security_context.privileged = True
-
-                # Patch the StatefulSet with our modified object
-                api.patch_namespaced_stateful_set(
-                    name=self.app.name, namespace=self.namespace, body=s
-                )
-                logger.info(
-                    "Patched StatefulSet to include additional volumes and mounts"
-                )
-                self._stored._k8s_stateful_patched = True
-                return
-            except Exception as e:
-                self.unit.status = MaintenanceStatus(
-                    "failed patching StatefulSet... Retrying in 10 seconds"
-                )
-                time.sleep(5)
-
+    def _restore_conf_files(self):
+        container = self.unit.get_container("nr-ue")
+        root_folder = "/opt/oai-nr-ue"
+        files = {f"{root_folder}/etc/nr-ue-sim.conf"}
+        for file in files:
+            file_content = container.pull(f"{file}_bkp").read()
+            container.push(file, file_content)
 
 if __name__ == "__main__":
     main(OaiNrUeCharm)
