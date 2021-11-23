@@ -10,3 +10,147 @@ options:
       start tcpdump collection to analyse but beware
       it will take a lot of space in the container/persistent volume.
     type: boolean
+  mcc:
+    description: ''
+    default: 208
+    type: int
+  mnc:
+    description: ''
+    default: 95
+    type: int
+  region-id:
+    description: ''
+    default: 128
+    type: int
+  amf-set-id:
+    description: ''
+    default: 1
+    type: int
+  served-guami-mcc-0:
+    description: ''
+    default: 208
+    type: int
+  served-guami-mnc-0:
+    description: ''
+    default: 95
+    type: int
+  served-guami-region-id-0:
+    description: ''
+    default: 128
+    type: int
+  served-guami-amf-set-id-0:
+    description: ''
+    default: 1
+    type: int
+  served-guami-mcc-1:
+    description: ''
+    default: 460
+    type: int
+  served-guami-mnc-1:
+    description: ''
+    default: 11
+    type: int
+  served-guami-region-id-1:
+    description: ''
+    default: 10
+    type: int
+  served-guami-amf-set-id-1:
+    description: ''
+    default: 1
+    type: int
+  plmn-support-mcc:
+    description: ''
+    default: 208
+    type: int
+  plmn-support-mnc:
+    description: ''
+    default: 95
+    type: int
+  plmn-support-tac:
+    description: ''
+    default: '0x0001'
+    type: string
+  sst-0:
+    description: ''
+    default: 1
+    type: int
+  sd-0:
+    description: ''
+    default: 1
+    type: int
+  sst-1:
+    description: ''
+    default: 111
+    type: int
+  sd-1:
+    description: ''
+    default: 124
+    type: int
+  amf-interface-name-for-ngap:
+    description: ''
+    default: 'eth0'
+    type: string
+  amf-interface-name-for-n11:
+    description: ''
+    default: 'eth0'
+    type: string
+  smf-instance-id-0:
+    description: ''
+    default: 1
+    type: int
+  smf-ipv4-addr-0:
+    description: ''
+    default: '0.0.0.0'
+    type: string
+  smf-http-version-0:
+    description: ''
+    default: 'v1'
+    type: string
+  smf-fqdn-0:
+    description: ''
+    default: 'localhost'
+    type: string
+  smf-instance-id-1:
+    description: ''
+    default: 2
+    type: int
+  smf-ipv4-addr-1:
+    description: ''
+    default: '0.0.0.0'
+    type: string
+  smf-http-version-1:
+    description: ''
+    default: 'v1'
+    type: string
+  smf-fqdn-1:
+    description: ''
+    default: 'localhost'
+    type: string
+  ausf-ipv4-address:
+    description: ''
+    default: '127.0.0.1'
+    type: string
+  ausf-port:
+    description: ''
+    default: 80
+    type: int
+  ausf-api-version:
+    description: ''
+    default: 'v1'
+    type: string
+  nf-registration:
+    description: ''
+    default: 'yes'
+    type: string
+  smf-selection:
+    description: ''
+    default: 'yes'
+    type: string
+  use-fqdn-dns:
+    description: ''
+    default: 'yes'
+    type: string
+  operator-key:
+    description: ''
+    default: '63bfa50ee6523365ff14c1f45f88737d'
+    type: string
