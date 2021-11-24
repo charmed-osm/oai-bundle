@@ -10,3 +10,91 @@ options:
       start tcpdump collection to analyse but beware
       it will take a lot of space in the container/persistent volume.
     type: boolean
+  gw-id:
+    description: ''
+    default: 1
+    type: int
+  mcc:
+    description: ''
+    default: 208
+    type: int
+  mnc03:
+    description: ''
+    default: 95
+    type: int
+  realm:
+    description: ''
+    default: '3gpp.org'
+    type: string
+  sgw-interface-name-for-s1u-s12-s4-up:
+    description: ''
+    default: 'eth0'
+    type: string
+  thread-s1u-prio:
+    description: ''
+    default: 98
+    type: string
+  s1u-threads:
+    description: ''
+    default: 1
+    type: int
+  sgw-interface-name-for-sx:
+    description: ''
+    default: 'eth0'
+    type: string
+  thread-sx-prio:
+    description: ''
+    default: 98
+    type: int
+  sx-threads:
+    description: ''
+    default: 1
+    type: int
+  pgw-interface-name-for-sgi:
+    description: ''
+    default: 'eth0'
+    type: int
+  thread-sgi-prio:
+    description: ''
+    default: 98
+    type: int
+  sgi-threads:
+    description: ''
+    default: 1
+    type: int
+  network-ue-nat-option:
+    description: ''
+    default: 'yes'
+    type: string
+  gtp-extension-header-present:
+    description: ''
+    default: 'yes'
+    type: string
+  network-ue-ip:
+    description: ''
+    default: '12.1.1.0/24'
+    type: string
+  spgwc0-ip-address:
+    description: ''
+    default: '127.0.0.1'
+    type: string
+  bypass-ul-pfcp-rules:
+    description: ''
+    default: 'no'
+    type: string
+  enable-5g-features:
+    description: ''
+    default: 'yes'
+    type: string
+  nssai-sst-0:
+    description: ''
+    default: 1
+    type: int
+  nssa-sd-0:
+    description: ''
+    default: 1
+    type: int
+  dnn-0:
+    description: ''
+    default: 'oai'
+    type: string
