@@ -33,7 +33,7 @@ options:
   thread-s1u-prio:
     description: ''
     default: 98
-    type: string
+    type: int
   s1u-threads:
     description: ''
     default: 1
@@ -53,7 +53,7 @@ options:
   pgw-interface-name-for-sgi:
     description: ''
     default: 'eth0'
-    type: int
+    type: string
   thread-sgi-prio:
     description: ''
     default: 98
