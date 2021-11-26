@@ -10,3 +10,19 @@ options:
       start tcpdump collection to analyse but beware
       it will take a lot of space in the container/persistent volume.
     type: boolean
+  nrf-interface-name-for-sbi:
+    description: ''
+    default: 'eth0'
+    type: string
+  nrf-interface-port-for-sbi:
+    description: ''
+    default: 80
+    type: int
+  nrf-interface-http2-port-for-sbi:
+    description: ''
+    default: 9090
+    type: int
+  nrf-api-version:
+    description: ''
+    default: 'v1'
+    type: string

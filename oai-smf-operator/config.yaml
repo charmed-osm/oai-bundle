@@ -10,3 +10,67 @@ options:
       start tcpdump collection to analyse but beware
       it will take a lot of space in the container/persistent volume.
     type: boolean
+  smf_interface_name_for_n4:
+    description: ''
+    default: 'eth0'
+    type: string
+  smf_interface_name_for_sbi:
+    description: ''
+    default: 'eth0'
+    type: string
+  smf_interface_port_for_sbi:
+    description: ''
+    default: 80
+    type: int
+  smf-interface-http2-port-for-sbi:
+    description: ''
+    default: 9090
+    type: int
+  smf_api_version:
+    description: ''
+    default: 'v1'
+    type: string
+  default-dns-ipv4-address:
+    description: ''
+    default: '8.8.8.8'
+    type: string
+  default-dns-sec-ipv4-address:
+    description: ''
+    default: '8.8.4.4'
+    type: string
+  register-nrf:
+    description: ''
+    default: 'yes'
+    type: string
+  discover-upf:
+    description: ''
+    default: 'yes'
+    type: string
+  use-fqdn-dns:
+    description: ''
+    default: 'yes'
+    type: string
+  udm-ipv4-address:
+    description: ''
+    default: '127.0.0.1'
+    type: string
+  udm-port:
+    description: ''
+    default: 80
+    type: int
+  udm-api-version:
+    description: ''
+    default: 'v1'
+    type: string
+  udm-fqdn:
+    description: ''
+    default: 'localhost'
+    type: string
+  upf-ipv4-address:
+    description: ''
+    default: '127.0.0.1'
+    type: string
+  upf-fqdn-0:
+    description: ''
+    default: 'localhost'
+    type: string
