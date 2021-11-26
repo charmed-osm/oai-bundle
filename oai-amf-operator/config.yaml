@@ -138,6 +138,14 @@ options:
     description: ''
     default: 'v1'
     type: string
+  ausf-fqdn:
+    description: ''
+    default: 'ausf'
+    type: string
+  external-ausf:
+    description: ''
+    default: 'no'
+    type: string
   nf-registration:
     description: ''
     default: 'yes'

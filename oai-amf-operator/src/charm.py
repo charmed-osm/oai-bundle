@@ -330,6 +330,8 @@ class OaiAmfCharm(OaiCharm):
                         "AUSF_IPV4_ADDRESS": self.config["ausf-ipv4-address"],
                         "AUSF_PORT": self.config["ausf-port"],
                         "AUSF_API_VERSION": self.config["ausf-api-version"],
+                        "AUSF_FQDN": self.config["ausf-fqdn"],  # TODO add support for ausf relation
+                        "EXTERNAL_AUSF": self.config["external-ausf"],  # TODO add support for ausf relation
                         "NF_REGISTRATION": self.config["nf-registration"],
                         "SMF_SELECTION": self.config["smf-selection"],
                         "USE_FQDN_DNS": self.config["use-fqdn-dns"],
